@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+# Python venv lib dirs (scoped to avoid matching frontend/src/lib/)
+**/lib/
+**/lib64/
+!frontend/src/lib/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.venv/
+venv/
+ENV/
+env/
+
+# Node.js / Frontend
+node_modules/
+npm-debug.log
+yarn-error.log
+dist/
+build/
+frontend/.svelte-kit/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Process PID files (created by start.sh)
+.pids/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Runtime data (LLM configs contain API keys, conversations are user data)
+backend/llm_configs.json
+backend/backend/llm_configs.json
+backend/docs/conversations/

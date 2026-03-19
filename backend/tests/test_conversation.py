@@ -1,0 +1,105 @@
+"""
+单元测试 - 对话管理
+"""
+import pytest
+import asyncio
+import tempfile
+import json
+from pathlib import Path
+from unittest.mock import patch
+
+
+@pytest.fixture
+def conv_dir(tmp_path):
+    return tmp_path / "conversations"
+
+
+@pytest.fixture
+def manager(conv_dir):
+    from agent.conversation import ConversationManager
+    ConversationManager._instance = None  # Reset singleton
+    with patch("agent.conversation.CONVERSATIONS_DIR", conv_dir):
+        mgr = ConversationManager()
+        conv_dir.mkdir(parents=True, exist_ok=True)
+        return mgr
+
+
+@pytest.mark.asyncio
+async def test_create_conversation(manager):
+    """测试创建对话"""
+    conv = await manager.create_conversation(name="测试对话")
+    assert conv.id is not None
+    assert conv.name == "测试对话"
+    assert conv.rounds == []
+
+
+@pytest.mark.asyncio
+async def test_add_round(manager):
+    """测试添加对话轮次"""
+    conv = await manager.create_conversation()
+    success = await manager.add_round(
+        conv.id,
+        user_input="用户输入",
+        agent_response="Agent响应",
+    )
+    assert success is True
+
+    loaded = await manager.get_conversation(conv.id)
+    assert len(loaded.rounds) == 1
+    assert loaded.rounds[0].user_input == "用户输入"
+
+
+@pytest.mark.asyncio
+async def test_multi_round_conversation(manager):
+    """测试多轮对话"""
+    conv = await manager.create_conversation()
+    for i in range(3):
+        await manager.add_round(conv.id, f"用户输入{i}", f"响应{i}")
+
+    loaded = await manager.get_conversation(conv.id)
+    assert len(loaded.rounds) == 3
+
+
+@pytest.mark.asyncio
+async def test_conversation_persistence(manager, conv_dir):
+    """测试对话持久化"""
+    conv = await manager.create_conversation(name="持久化测试")
+    await manager.add_round(conv.id, "输入", "响应")
+
+    # 清除内存缓存，模拟重启
+    manager._conversations.clear()
+
+    loaded = await manager.get_conversation(conv.id)
+    assert loaded is not None
+    assert loaded.name == "持久化测试"
+    assert len(loaded.rounds) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_conversations(manager):
+    """测试列出对话"""
+    await manager.create_conversation(name="对话A")
+    await manager.create_conversation(name="对话B")
+
+    convs = await manager.list_conversations()
+    assert len(convs) >= 2
+
+
+@pytest.mark.asyncio
+async def test_delete_conversation(manager):
+    """测试删除对话"""
+    conv = await manager.create_conversation()
+    result = await manager.delete_conversation(conv.id)
+    assert result is True
+
+    loaded = await manager.get_conversation(conv.id)
+    assert loaded is None
+
+
+@pytest.mark.asyncio
+async def test_add_round_to_nonexistent_conversation(manager):
+    """测试向不存在的对话添加轮次"""
+    result = await manager.add_round(
+        "nonexistent-id", "输入", "响应"
+    )
+    assert result is False

@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./docs:/data/docs
+      - ./project-facts:/data/project-facts
+      - ./skills:/data/skills
+      - backend_configs:/app/llm_configs.json
+    environment:
+      - DOCS_ROOT=/data/docs
+      - PROJECT_FACTS_ROOT=/data/project-facts
+      - SKILLS_ROOT=/data/skills
+      - ALLOWED_ORIGINS=http://localhost
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend_configs:
