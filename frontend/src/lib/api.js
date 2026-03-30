@@ -47,11 +47,11 @@ export const llmConfigs = {
 
 // ── Documents ──────────────────────────────────────────────────────────────
 export const documents = {
-  list:       (doc_type)              => req('GET', `/documents${doc_type ? `?doc_type=${doc_type}` : ''}`),
-  versions:   (doc_type, doc_name)    => req('GET', `/documents/${doc_type}/${doc_name}/versions`),
-  latest:     (doc_type, doc_name)    => req('GET', `/documents/${doc_type}/${doc_name}/latest`),
+  list:       (doc_type)              => req('GET', `/documents${doc_type ? `?doc_type=${encodeURIComponent(doc_type)}` : ''}`),
+  versions:   (doc_type, doc_name)    => req('GET', `/documents/${encodeURIComponent(doc_type)}/${encodeURIComponent(doc_name)}/versions`),
+  latest:     (doc_type, doc_name)    => req('GET', `/documents/${encodeURIComponent(doc_type)}/${encodeURIComponent(doc_name)}/latest`),
   getVersion: (doc_type, doc_name, date, ver) =>
-                                         req('GET', `/documents/${doc_type}/${doc_name}/${date}/${ver}`),
+                                         req('GET', `/documents/${encodeURIComponent(doc_type)}/${encodeURIComponent(doc_name)}/${date}/${ver}`),
 };
 
 // ── Project fact information ───────────────────────────────────────────────

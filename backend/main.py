@@ -16,6 +16,8 @@ from typing import Optional
 
 from agent.core import AgentCore
 from agent.conversation import ConversationManager
+from agent.adk.runner_adapter import stream_message as adk_stream, get_active_context, remove_session
+from pydantic import BaseModel
 from agent.models import (
     ChatRequest,
     ChatResponse,
@@ -25,6 +27,7 @@ from agent.models import (
     HealthResponse,
     WritingState,
 )
+from llm.service import LLMService
 from fact_info_service import get_fact_service
 from llm.routes import router as llm_router
 from doc_version_service import get_doc_version_service
@@ -48,7 +51,7 @@ def _extract_doc_content(text: str) -> str:
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
@@ -149,7 +152,87 @@ async def delete_conversation(
     success = await manager.delete_conversation(conversation_id)
     if not success:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    remove_session(conversation_id)
     return {"message": "Conversation deleted"}
+
+
+class ConversationUpdate(BaseModel):
+    name: str
+
+
+@app.patch("/api/v1/conversations/{conversation_id}", tags=["Conversations"])
+async def update_conversation(
+    conversation_id: str,
+    body: ConversationUpdate,
+    manager: ConversationManager = Depends(get_conversation_manager),
+):
+    """Update conversation name."""
+    conversation = await manager.get_conversation(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    conversation.name = body.name.strip() or conversation.name
+    from agent.conversation import _now
+    conversation.updated_at = _now()
+    await manager._save(conversation)
+    return {"conversation_id": conversation.id, "name": conversation.name}
+
+
+async def _try_auto_name(conversation_id: str, manager: ConversationManager) -> None:
+    """Auto-generate a conversation title if it still has a default timestamp name."""
+    try:
+        conversation = await manager.get_conversation(conversation_id)
+        if not conversation:
+            logger.warning(f"auto_name: conversation {conversation_id} not found")
+            return
+        if not conversation.rounds:
+            logger.warning(f"auto_name: conversation {conversation_id} has no rounds")
+            return
+        if not conversation.name.startswith("对话 "):
+            logger.info(f"auto_name: skipped, name already set: {conversation.name!r}")
+            return
+
+        first_round = conversation.rounds[0]
+        user_input = first_round.user_input[:300]
+        response_summary = (first_round.agent_response or "")[:200]
+
+        logger.info(f"auto_name: generating title for {conversation_id}, input={user_input[:50]!r}")
+
+        llm = LLMService()
+        title, _ = await llm.complete(
+            system_prompt="你是一个对话标题生成助手，根据用户输入和AI回复生成简短的中文标题。只返回标题文本，不超过15个字，不加引号。",
+            messages=[],
+            user_message=f"用户：{user_input}\nAI：{response_summary}",
+        )
+        title = title.strip().strip('"').strip("'")[:20]
+        logger.info(f"auto_name: got title={title!r}")
+
+        if title and not title.startswith("⚠️"):
+            conversation.name = title
+            from agent.conversation import _now
+            conversation.updated_at = _now()
+            await manager._save(conversation)
+            logger.info(f"auto_name: saved title={title!r} for {conversation_id}")
+        else:
+            logger.warning(f"auto_name: title rejected: {title!r}")
+    except Exception as e:
+        logger.error(f"auto_name: failed for {conversation_id}: {e}", exc_info=True)
+
+
+@app.post("/api/v1/conversations/{conversation_id}/auto-name", tags=["Conversations"])
+async def auto_name_conversation(
+    conversation_id: str,
+    manager: ConversationManager = Depends(get_conversation_manager),
+):
+    """Generate a semantic title for the conversation using LLM."""
+    conversation = await manager.get_conversation(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if not conversation.rounds:
+        raise HTTPException(status_code=400, detail="No rounds yet")
+
+    await _try_auto_name(conversation_id, manager)
+    conversation = await manager.get_conversation(conversation_id)
+    return {"conversation_id": conversation.id, "name": conversation.name}
 
 
 @app.post("/api/v1/conversations/{conversation_id}/save-draft", tags=["Conversations"])
@@ -180,6 +263,8 @@ async def save_draft(
 
     ws.saved_version = ref.version
     ws.saved_path = ref.relative_path
+    ws.module_name = ref.doc_name
+    ws.doc_type = ref.doc_type
     await manager._save(conversation)
 
     return {
@@ -351,12 +436,65 @@ class ConnectionManager:
 ws_manager = ConnectionManager()
 
 
+async def _run_agent_stream(
+    conversation_id: str,
+    message: str,
+    ws_manager_ref: "ConnectionManager",
+    manager: "ConversationManager",
+    skill_manager,
+    ws_sender,
+) -> dict:
+    """在独立协程中运行 ADK Agent 流，收集 done 数据后返回。
+
+    与 WebSocket 接收循环并发运行，使 ask_user 的用户回复可以实时送达。
+    """
+    skill_id = None
+    skill_name = None
+    skill_reason = None
+    llm_usage = None
+    done_data = None
+    text_response = ""  # 累积非草稿的对话回复文本（用于持久化到 agent_response）
+
+    async for chunk in adk_stream(
+        conversation_id=conversation_id,
+        message=message,
+        ws_sender=ws_sender,
+        conversation_manager=manager,
+        skill_manager=skill_manager,
+    ):
+        chunk_type = chunk.get("type")
+        if chunk_type in ("text", "status", "error", "question", "thinking", "skill_start"):
+            await ws_manager_ref.send_message(conversation_id, chunk)
+            if chunk_type == "text":
+                text_response += chunk.get("content", "")
+        elif chunk_type == "done":
+            skill_id = chunk.get("skill_id") or skill_id
+            skill_name = chunk.get("skill_name")
+            skill_reason = chunk.get("skill_reason")
+            llm_usage = chunk.get("usage")
+            done_data = chunk
+            await ws_manager_ref.send_message(conversation_id, chunk)
+
+    return {
+        "done_data": done_data,
+        "skill_id": skill_id,
+        "skill_name": skill_name,
+        "skill_reason": skill_reason,
+        "llm_usage": llm_usage,
+        "text_response": text_response,
+    }
+
+
 @app.websocket("/ws/{conversation_id}")
 async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     """WebSocket endpoint for real-time chat."""
     await ws_manager.connect(websocket, conversation_id)
     agent = AgentCore.get_instance()
     manager = ConversationManager.get_instance()
+
+    async def ws_sender(msg: dict):
+        """直接向 WebSocket 发送消息（供工具侧信道流式输出使用）。"""
+        await ws_manager.send_message(conversation_id, msg)
 
     try:
         while True:
@@ -366,52 +504,77 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             if not message:
                 continue
 
+            # 检查是否有等待用户回复的活跃上下文（ask_user 场景）
+            active_ctx = get_active_context(conversation_id)
+            if active_ctx and active_ctx.waiting_for_user:
+                # 将用户回复投入等待队列，不启动新的 Agent 运行
+                await active_ctx.user_input_queue.put(message)
+                continue
+
             # Send acknowledgment
             await ws_manager.send_message(conversation_id, {
                 "type": "ack",
                 "conversation_id": conversation_id,
             })
 
-            # Collect full response while streaming
-            full_response = []
-            skill_id = None
-            skill_name = None
-            skill_reason = None
-            llm_usage = None
-            done_data = None
-            async for chunk in agent.stream_message(
-                conversation_id=conversation_id,
-                message=message,
-            ):
-                await ws_manager.send_message(conversation_id, chunk)
-                if chunk.get("type") == "text":
-                    full_response.append(chunk.get("content", ""))
-                elif chunk.get("type") == "skill_start":
-                    skill_id = chunk.get("skill_id")
-                elif chunk.get("type") == "done":
-                    skill_id = chunk.get("skill_id") or skill_id
-                    skill_name = chunk.get("skill_name")
-                    skill_reason = chunk.get("skill_reason")
-                    llm_usage = chunk.get("usage")
-                    done_data = chunk
+            # 将 Agent 运行放入独立任务，保持 WebSocket 接收循环活跃
+            # 这样 ask_user 等待用户回复时，接收循环可以继续接收消息并路由到队列
+            agent_task = asyncio.create_task(
+                _run_agent_stream(
+                    conversation_id=conversation_id,
+                    message=message,
+                    ws_manager_ref=ws_manager,
+                    manager=manager,
+                    skill_manager=agent._skill_manager,
+                    ws_sender=ws_sender,
+                )
+            )
 
-            # Collect response text (no auto-save; user explicitly saves via save-draft)
-            response_text = "".join(full_response)
+            # 等待 Agent 完成，同时保持接收循环活跃以处理 ask_user 回复
+            while not agent_task.done():
+                try:
+                    incoming = await asyncio.wait_for(
+                        websocket.receive_json(), timeout=0.5
+                    )
+                    inc_message = incoming.get("message", "")
+                    if inc_message:
+                        inc_ctx = get_active_context(conversation_id)
+                        if inc_ctx and inc_ctx.waiting_for_user:
+                            await inc_ctx.user_input_queue.put(inc_message)
+                        # else: 忽略 Agent 运行期间收到的其他消息
+                except asyncio.TimeoutError:
+                    pass  # 正常：无新消息，继续等待
+                except WebSocketDisconnect:
+                    agent_task.cancel()
+                    raise
+
+            result = await agent_task
+            done_data = result.get("done_data")
+            skill_id = result.get("skill_id")
+            skill_reason = result.get("skill_reason")
+            llm_usage = result.get("llm_usage")
+
+            # 持久化 agent_response：草稿场景用 draft_content，普通对话用累积的 text_response
+            has_draft_this_round = bool(done_data and done_data.get("has_draft"))
+            draft_content = done_data.get("draft_content", "") if (done_data and has_draft_this_round) else ""
+            response_text = draft_content or result.get("text_response", "")
             documents = []
 
             # Save round to conversation history
-            if response_text:
-                llm_info = None
-                if llm_usage or skill_reason:
-                    llm_info = {**(llm_usage or {}), "skill_reason": skill_reason}
-                await manager.add_round(
-                    conversation_id=conversation_id,
-                    user_input=message,
-                    agent_response=response_text,
-                    skill_invoked=skill_id,
-                    documents_generated=documents,
-                    llm_info=llm_info,
-                )
+            llm_info = None
+            if llm_usage or skill_reason:
+                llm_info = {**(llm_usage or {}), "skill_reason": skill_reason}
+            await manager.add_round(
+                conversation_id=conversation_id,
+                user_input=message,
+                agent_response=response_text,
+                skill_invoked=skill_id,
+                documents_generated=documents,
+                llm_info=llm_info,
+            )
+
+            # Auto-name: generate semantic title on the first round (fire-and-forget)
+            asyncio.create_task(_try_auto_name(conversation_id, manager))
 
             # Update writing_state if this round produced a draft
             if done_data and done_data.get("has_draft") and response_text:

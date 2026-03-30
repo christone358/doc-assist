@@ -2,7 +2,7 @@
 
 ## 概述
 
-NextAgent Doc Assistant 支持 DeepSeek 和 通义千问（QWen）两种 LLM 服务。本指南说明如何配置和使用这两种模型。
+NextAgent Doc Assistant 支持 DeepSeek、通义千问（QWen）和 Ollama 本地模型。本指南说明如何配置和使用这些模型。
 
 ---
 
@@ -76,7 +76,39 @@ NextAgent Doc Assistant 支持 DeepSeek 和 通义千问（QWen）两种 LLM 服
 
 ---
 
-## 3. 模型参数说明
+## 3. Ollama 本地模型配置
+
+适用于本地或局域网内部署的 OpenAI 兼容模型服务，例如：
+- `qwen2.5-coder:14b-instruct-q5_K_S`
+- `llama3.1`
+- `deepseek-r1`
+
+### 3.1 推荐配置
+
+| 参数 | 说明 | 示例值 |
+|------|------|-------|
+| `provider` | 服务商 | `ollama` |
+| `model_name` | Ollama 中已拉取的模型名 | `qwen2.5-coder:14b-instruct-q5_K_S` |
+| `api_base` | Ollama 服务地址 | `http://192.168.5.162:11434` |
+| `api_key` | OpenAI 兼容占位令牌 | `sk-ollama` |
+
+### 3.2 在 Web UI 中配置
+
+1. 进入「⚙️ LLM 配置」标签
+2. 点击「添加配置」
+3. 选择「Ollama（本地模型）」
+4. 填写：
+   - 配置名称：如「本地 Qwen 14B」
+   - 模型：`qwen2.5-coder:14b-instruct-q5_K_S`
+   - API 地址：`http://192.168.5.162:11434`
+   - API Token：`sk-ollama`
+5. 点击「测试连接」验证
+
+说明：系统会自动把 Ollama 根地址补全为 OpenAI 兼容的 `/v1` 路径，无需手工填写。
+
+---
+
+## 4. 模型参数说明
 
 ### temperature（温度）
 
@@ -98,7 +130,7 @@ NextAgent Doc Assistant 支持 DeepSeek 和 通义千问（QWen）两种 LLM 服
 
 ---
 
-## 4. 模型切换
+## 5. 模型切换
 
 可在对话过程中通过「⚙️ LLM 配置」页面随时切换默认模型，切换后的新对话将使用新模型。
 
@@ -108,7 +140,7 @@ NextAgent Doc Assistant 支持 DeepSeek 和 通义千问（QWen）两种 LLM 服
 
 ---
 
-## 5. 故障排查
+## 6. 故障排查
 
 | 错误 | 原因 | 解决方法 |
 |------|------|---------|
@@ -116,3 +148,4 @@ NextAgent Doc Assistant 支持 DeepSeek 和 通义千问（QWen）两种 LLM 服
 | 响应超时 | 网络问题 | 检查网络，或稍后重试 |
 | 模型不存在 | 模型名称错误 | 参考支持的模型列表 |
 | 余额不足 | API 配额用完 | 充值后继续使用 |
+| Ollama 连接失败 | 填了根地址但后端按其他 provider 调用 | 确认服务商选择为 `Ollama`，地址填写 `http://<host>:11434` 即可 |

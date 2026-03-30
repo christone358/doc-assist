@@ -73,7 +73,7 @@ class SkillLoader:
                 version=metadata.get("version", metadata.get("Version")),
                 tags=tags,
                 capabilities=caps,
-                content=self._read_body(skill_md),
+                skill_md_path=str(skill_md),
             )
 
         except Exception as e:

@@ -15,6 +15,10 @@ pyyaml>=6.0.1
 python-multipart>=0.0.9
 aiofiles>=23.2.0
 
+# ADK Agent Framework
+google-adk>=1.0.0
+litellm>=1.40.0
+
 # Development / Testing
 pytest>=8.0.0
 pytest-asyncio>=0.23.0

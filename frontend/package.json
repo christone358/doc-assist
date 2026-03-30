@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@sveltejs/kit": "^2.0.0",
+    "marked": "^17.0.5",
     "svelte": "^4.2.0"
   },
   "devDependencies": {

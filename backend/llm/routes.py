@@ -191,7 +191,7 @@ async def test_connection(config_id: str):
 
     service = LLMService()
     try:
-        response = await service.complete(
+        response, _ = await service.complete(
             system_prompt="You are a helpful assistant.",
             messages=[],
             user_message="Reply with exactly: OK",

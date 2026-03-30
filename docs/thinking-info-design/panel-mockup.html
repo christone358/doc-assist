@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>可观测性面板 — 示例呈现</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet"/>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Inter', sans-serif;
+  background: #F8FAFC;
+  color: #1E293B;
+  height: 100vh;
+  display: flex;
+  overflow: hidden;
+}
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  font-size: 18px;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+/* ── Left nav (simplified) ── */
+.nav {
+  width: 220px;
+  flex-shrink: 0;
+  background: #F8FAFC;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 12px 16px;
+  gap: 2px;
+}
+.logo { display: flex; align-items: center; gap: 10px; padding: 0 4px 16px; }
+.logo-icon {
+  width: 34px; height: 34px;
+  background: #6366F1; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 10px rgba(99,102,241,0.35);
+}
+.logo-name { font-family: 'Plus Jakarta Sans'; font-weight: 700; font-size: 13px; }
+.logo-sub  { font-size: 10px; color: #94A3B8; }
+.nav-btn {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: 8px;
+  font-size: 13px; font-weight: 500; color: #64748B;
+  cursor: pointer; border: none; background: none; width: 100%;
+  text-align: left;
+}
+.nav-btn.active { background: #fff; color: #6366F1; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+.nav-conv-section { font-size: 13px; font-weight: 500; color: #94A3B8; padding: 8px 12px 4px; }
+.conv-item {
+  display: flex; align-items: center; width: 100%;
+  padding: 9px 12px; border-radius: 8px;
+  background: none; border: none; color: #64748B;
+  font-size: 13px; font-weight: 500; text-align: left; cursor: pointer;
+}
+.conv-item.active { background: #fff; color: #6366F1; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+.date-label { font-size: 10px; font-weight: 700; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.06em; padding: 8px 12px 2px; }
+
+/* ── Main area ── */
+.main {
+  flex: 1; min-width: 0;
+  background: #fff;
+  border-radius: 16px 0 0 16px;
+  box-shadow: -4px 0 24px rgba(99,102,241,0.06);
+  display: flex;
+  overflow: hidden;
+}
+
+/* ── Chat pane ── */
+.chat-pane {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.chat-header {
+  padding: 16px 24px;
+  border-bottom: 1.5px solid #E2E8F0;
+  font-size: 15px; font-weight: 600;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.chat-messages {
+  flex: 1; overflow-y: auto;
+  padding: 24px; display: flex; flex-direction: column; gap: 20px;
+}
+.msg-user { display: flex; justify-content: flex-end; }
+.msg-user .bubble {
+  background: #6366F1; color: #fff;
+  padding: 11px 16px; border-radius: 14px 14px 4px 14px;
+  font-size: 14px; line-height: 1.6; max-width: 72%;
+  box-shadow: 0 4px 12px rgba(99,102,241,0.25);
+}
+.msg-assistant { display: flex; gap: 10px; align-items: flex-start; }
+.avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: #EEF2FF; display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; margin-top: 2px;
+}
+.bubble-assistant {
+  background: #F8FAFC; border-radius: 4px 14px 14px 14px;
+  padding: 12px 16px; font-size: 13.5px; line-height: 1.7;
+  max-width: 78%; color: #1E293B;
+}
+.meta-bar {
+  margin-top: 10px; padding-top: 8px;
+  border-top: 1.5px solid #E2E8F0;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.skill-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #EEF2FF; color: #6366F1;
+  border-radius: 6px; padding: 3px 8px;
+  font-size: 11px; font-weight: 600;
+}
+.token-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #F1F5F9; color: #64748B;
+  border-radius: 6px; padding: 3px 8px;
+  font-size: 11px;
+}
+.thinking-block {
+  margin-bottom: 10px; background: #EEF2FF; border-radius: 8px; overflow: hidden;
+}
+.thinking-toggle {
+  width: 100%; display: flex; align-items: center; gap: 6px;
+  padding: 7px 12px; background: transparent; border: none;
+  cursor: pointer; color: #6366F1; font-size: 12px; font-weight: 600; text-align: left;
+  justify-content: space-between;
+}
+.thinking-open-btn {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 7px; border-radius: 5px; border: none;
+  background: rgba(99,102,241,0.15); color: #6366F1;
+  font-size: 10px; font-weight: 600; cursor: pointer; margin-left: auto;
+}
+.thinking-toggle-left { display: flex; align-items: center; gap: 6px; }
+.status-steps { margin-bottom: 10px; display: flex; flex-direction: column; gap: 4px; }
+.status-step { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #64748B; }
+.chat-input-area { padding: 16px 24px 20px; }
+.input-pill {
+  display: flex; align-items: flex-end; gap: 0;
+  background: #F8FAFC; border-radius: 20px;
+  padding: 10px 12px 8px;
+  box-shadow: 0 4px 20px rgba(99,102,241,0.10);
+  border: 1.5px solid transparent;
+}
+.input-pill textarea {
+  flex: 1; resize: none; border: none; background: transparent;
+  padding: 0 8px 0 4px; font-size: 14px; line-height: 1.6; color: #1E293B;
+  font-family: 'Inter', sans-serif; min-height: 42px;
+}
+.btn-send {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: #6366F1; color: #fff; border: none;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 3px 10px rgba(99,102,241,0.35);
+}
+.obs-open-btn {
+  display: flex; align-items: center; gap: 5px; padding: 5px 10px;
+  border-radius: 7px; border: none; background: #EEF2FF; color: #6366F1;
+  font-size: 11px; font-weight: 600; cursor: pointer;
+}
+
+/* ── Observability Panel ── */
+.obs-panel {
+  width: 360px; flex-shrink: 0;
+  background: #fff;
+  border-left: 1px solid rgba(226,232,240,0.8);
+  display: flex; flex-direction: column;
+  position: relative;
+  box-shadow: -8px 0 30px rgba(99,102,241,0.04);
+}
+.obs-panel-header {
+  height: 56px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 18px; background: #F8FAFC;
+  border-bottom: 1px solid #E2E8F0; flex-shrink: 0;
+}
+.obs-panel-title {
+  display: flex; align-items: center; gap: 8px;
+  font-family: 'Plus Jakarta Sans'; font-weight: 700; font-size: 14px;
+}
+.obs-close-btn {
+  width: 28px; height: 28px; border-radius: 7px; border: none;
+  background: none; color: #94A3B8; cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.obs-toggle-btn {
+  position: absolute; left: -14px; top: 50%; transform: translateY(-50%);
+  width: 28px; height: 44px; border-radius: 8px; border: 1px solid #E2E8F0;
+  background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: #94A3B8; z-index: 10;
+}
+.obs-content { flex: 1; overflow-y: auto; padding: 20px 18px; display: flex; flex-direction: column; gap: 20px; }
+.obs-footer {
+  padding: 12px 18px; background: #F8FAFC; border-top: 1px solid #E2E8F0;
+  display: flex; justify-content: space-between;
+  font-size: 10px; font-weight: 700; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.08em;
+  flex-shrink: 0;
+}
+
+/* ── Timeline sections ── */
+.tl-section { position: relative; padding-left: 20px; }
+.tl-line {
+  position: absolute; left: 4px; top: 12px; bottom: 0; width: 2px;
+  border-radius: 1px;
+}
+.tl-dot {
+  position: absolute; left: -1px; top: 3px;
+  width: 10px; height: 10px; border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(255,255,255,0.9);
+}
+.tl-label {
+  font-size: 9px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.18em; margin-bottom: 10px;
+}
+.tl-card {
+  border-radius: 10px; padding: 12px 14px;
+  font-size: 12px; line-height: 1.65; color: #475569;
+}
+.tl-card-white { background: #fff; border: 1px solid rgba(226,232,240,0.8); }
+.tl-card-base  { background: #F8FAFC; border: 1px solid rgba(226,232,240,0.5); }
+
+/* Thinking section */
+.thinking-text {
+  max-height: 160px; overflow-y: auto;
+  font-size: 11.5px; line-height: 1.7; color: #64748B;
+  font-style: italic; white-space: pre-wrap;
+}
+
+/* Skill card */
+.skill-card-tool {
+  display: flex; align-items: flex-start; gap: 10px;
+}
+.skill-icon-wrap {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: #F3E8FF; display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.skill-card-name { font-weight: 700; font-size: 12.5px; color: #1E293B; }
+.skill-card-reason { font-size: 11px; color: #64748B; margin-top: 3px; line-height: 1.5; }
+.skill-status { margin-left: auto; flex-shrink: 0; color: #22C55E; }
+
+/* Status checklist */
+.status-list { display: flex; flex-direction: column; gap: 6px; }
+.status-list-item { display: flex; align-items: flex-start; gap: 7px; font-size: 11.5px; color: #475569; line-height: 1.5; }
+.status-icon-done  { color: #22C55E; font-size: 14px !important; }
+.status-highlight { font-weight: 600; color: #1E293B; }
+
+/* Question card */
+.question-card {
+  border-left: 3px solid #F59E0B; background: #FFFBEB; border-radius: 0 10px 10px 0;
+  padding: 12px 14px;
+}
+.question-label { font-size: 10px; font-weight: 700; color: #F59E0B; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; display: flex; align-items: center; gap: 4px; }
+.question-text { font-size: 12px; color: #92400E; line-height: 1.6; }
+
+/* Done card */
+.done-card {
+  background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+  border-radius: 10px; padding: 12px 14px; color: #fff;
+}
+.done-card-title { font-weight: 700; font-size: 12px; margin-bottom: 6px; display: flex; align-items: center; gap: 5px; }
+.done-stats { display: flex; gap: 10px; flex-wrap: wrap; }
+.done-stat { background: rgba(255,255,255,0.18); border-radius: 6px; padding: 4px 10px; font-size: 10.5px; font-weight: 600; }
+
+/* data source badge */
+.source-badge { font-size: 9px; color: #94A3B8; background: #F1F5F9; border-radius: 4px; padding: 1px 5px; vertical-align: middle; margin-left: 4px; }
+.real-data { background: #ECFDF5; color: #059669; }
+.reconstructed { background: #FFF7ED; color: #9A3412; }
+</style>
+</head>
+<body>
+
+<!-- ── 左侧导航 ── -->
+<nav class="nav">
+  <div class="logo">
+    <div class="logo-icon">
+      <span class="material-symbols-outlined" style="font-size:18px;color:#fff;font-variation-settings:'FILL' 1,'wght' 600;">auto_awesome</span>
+    </div>
+    <div>
+      <div class="logo-name">NextAgent</div>
+      <div class="logo-sub" style="font-family:Inter">Doc Assistant</div>
+    </div>
+  </div>
+  <button class="nav-btn active">
+    <span class="material-symbols-outlined" style="font-size:18px;font-variation-settings:'FILL' 1,'wght' 500;">chat_bubble</span> 新对话
+  </button>
+  <button class="nav-btn">
+    <span class="material-symbols-outlined" style="font-size:18px;">extension</span> Skill
+  </button>
+  <button class="nav-btn">
+    <span class="material-symbols-outlined" style="font-size:18px;">folder_open</span> 文档
+  </button>
+  <button class="nav-btn">
+    <span class="material-symbols-outlined" style="font-size:18px;">auto_stories</span> 事实信息
+  </button>
+  <div class="nav-conv-section">对话</div>
+  <div class="date-label">今天</div>
+  <button class="conv-item active">LLM集成模块需求规格</button>
+  <button class="conv-item">Agent集成模块用例</button>
+  <div style="flex:1"></div>
+  <button class="nav-btn">
+    <span class="material-symbols-outlined" style="font-size:18px;">settings</span> LLM 配置
+  </button>
+</nav>
+
+<!-- ── 主内容区 ── -->
+<main class="main">
+
+  <!-- 对话窗格 -->
+  <div class="chat-pane">
+    <div class="chat-header">
+      <span>LLM集成模块需求规格</span>
+      <button class="obs-open-btn">
+        <span class="material-symbols-outlined" style="font-size:14px;">analytics</span>
+        查看过程明细
+      </button>
+    </div>
+
+    <div class="chat-messages">
+
+      <!-- 用户消息 (第1轮, 真实数据) -->
+      <div class="msg-user">
+        <div class="bubble">
+          编写llm集成配置管理模块的需规
+          <span class="source-badge real-data">真实数据</span>
+        </div>
+      </div>
+
+      <!-- Agent 消息 (第1轮) -->
+      <div class="msg-assistant">
+        <div class="avatar">
+          <span class="material-symbols-outlined" style="font-size:16px;color:#6366F1;font-variation-settings:'FILL' 1,'wght' 500;">auto_awesome</span>
+        </div>
+        <div class="bubble-assistant">
+
+          <!-- thinking block with "open panel" button -->
+          <div class="thinking-block">
+            <div class="thinking-toggle">
+              <div class="thinking-toggle-left">
+                <span class="material-symbols-outlined" style="font-size:14px;">expand_more</span>
+                <span>思考过程</span>
+              </div>
+              <button class="thinking-open-btn">
+                <span class="material-symbols-outlined" style="font-size:11px;">analytics</span>
+                过程明细
+              </button>
+            </div>
+          </div>
+
+          <!-- status steps -->
+          <div class="status-steps">
+            <div class="status-step">
+              <span class="material-symbols-outlined" style="font-size:13px;color:#22C55E;font-variation-settings:'FILL' 1,'wght' 400;">check_circle</span>
+              正在加载项目事实信息...
+            </div>
+            <div class="status-step">
+              <span class="material-symbols-outlined" style="font-size:13px;color:#22C55E;font-variation-settings:'FILL' 1,'wght' 400;">check_circle</span>
+              正在使用 Skill: write-requirements · 用户需要编写需求规格文档
+            </div>
+          </div>
+
+          <div style="font-size:13.5px;color:#475569;line-height:1.7">
+            # LLM 集成配置管理模块需求规格文档<br>
+            <span style="color:#94A3B8">（文档已生成，共 2,400 字）</span>
+          </div>
+
+          <div class="meta-bar">
+            <span class="skill-badge">
+              <span class="material-symbols-outlined" style="font-size:12px;font-variation-settings:'FILL' 1,'wght' 500;">extension</span>
+              write-requirements
+            </span>
+            <span class="source-badge real-data">技能数据: 真实</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 用户消息 (第2轮, 真实数据) -->
+      <div class="msg-user">
+        <div class="bubble">
+          对于文档概述部分，增加文字量，达到300字。
+        </div>
+      </div>
+
+      <!-- Agent 消息 (第2轮) -->
+      <div class="msg-assistant">
+        <div class="avatar">
+          <span class="material-symbols-outlined" style="font-size:16px;color:#6366F1;font-variation-settings:'FILL' 1,'wght' 500;">auto_awesome</span>
+        </div>
+        <div class="bubble-assistant">
+          <div class="thinking-block">
+            <div class="thinking-toggle">
+              <div class="thinking-toggle-left">
+                <span class="material-symbols-outlined" style="font-size:14px;">expand_more</span>
+                <span>思考过程</span>
+              </div>
+              <button class="thinking-open-btn" style="background:rgba(99,102,241,0.2)">
+                <span class="material-symbols-outlined" style="font-size:11px;">analytics</span>
+                过程明细
+              </button>
+            </div>
+          </div>
+          <div class="status-steps">
+            <div class="status-step">
+              <span class="material-symbols-outlined" style="font-size:13px;color:#22C55E;font-variation-settings:'FILL' 1,'wght' 400;">check_circle</span>
+              已加载草稿：LLM集成配置管理模块需求规格文档 v1.0.0
+            </div>
+            <div class="status-step">
+              <span class="material-symbols-outlined" style="font-size:13px;color:#22C55E;font-variation-settings:'FILL' 1,'wght' 400;">check_circle</span>
+              正在修改文档概述...
+            </div>
+          </div>
+          <div style="font-size:13.5px;color:#475569;line-height:1.7">
+            文档概述部分已扩充至 300 字，重点增加了模块功能范围说明和不涉及内容的边界描述。
+          </div>
+          <div style="margin-top:10px;padding:8px 12px;background:#F8FAFC;border-radius:8px;font-size:12px;color:#64748B;display:flex;align-items:center;gap:8px">
+            <span class="material-symbols-outlined" style="font-size:15px;color:#6366F1;font-variation-settings:'FILL' 1,'wght' 400;">description</span>
+            requirements/LLM 集成配置管理模块需求规格文档/2026-03-17/v1.0.0.md
+            <span class="token-badge">v1.0.0</span>
+            <span class="source-badge real-data">文件路径: 真实</span>
+          </div>
+          <div class="meta-bar">
+            <span class="token-badge">
+              <span class="material-symbols-outlined" style="font-size:12px;">bar_chart</span>
+              4,831 tokens
+            </span>
+            <span class="source-badge real-data">Token: 真实</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="chat-input-area">
+      <div class="input-pill">
+        <textarea placeholder="输入你的文档需求…（Enter 发送，Shift+Enter 换行）" rows="2"></textarea>
+        <button class="btn-send">
+          <span class="material-symbols-outlined" style="font-size:18px;font-variation-settings:'FILL' 1,'wght' 600;">send</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 可观测性面板 (第2轮状态) ── -->
+  <aside class="obs-panel">
+
+    <!-- edge toggle -->
+    <div class="obs-toggle-btn">
+      <span class="material-symbols-outlined" style="font-size:18px;">chevron_right</span>
+    </div>
+
+    <!-- header -->
+    <div class="obs-panel-header">
+      <div class="obs-panel-title">
+        <span class="material-symbols-outlined" style="font-size:18px;color:#6366F1;font-variation-settings:'FILL' 1,'wght' 500;">analytics</span>
+        过程明细
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:10px;color:#94A3B8;font-weight:600;text-transform:uppercase;letter-spacing:0.08em">第 2 轮</span>
+        <button class="obs-close-btn">
+          <span class="material-symbols-outlined" style="font-size:16px;">close</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- content -->
+    <div class="obs-content">
+
+      <!-- 01. 思考推理 (重建数据) -->
+      <div class="tl-section">
+        <div class="tl-line" style="background: linear-gradient(to bottom, #6366F1, rgba(99,102,241,0.1))"></div>
+        <div class="tl-dot" style="background:#6366F1; outline: 3px solid rgba(99,102,241,0.15); outline-offset:1px; left:-1px"></div>
+        <div class="tl-label" style="color:#6366F1">
+          01. 思考推理
+          <span class="source-badge reconstructed">推演示例</span>
+        </div>
+        <div class="tl-card tl-card-base">
+          <div class="thinking-text">用户希望修改需求文档的"文档概述"部分，增加字数到300字。
+
+任务类型：精准文档修改
+目标章节：1. 文档概述（1.1 目的 + 1.2 范围）
+修改要求：字数从约140字扩充到300字
+
+我需要：
+1. 加载现有草稿最新版本 v1.0.0
+2. 定位"文档概述"章节
+3. 在保持技术准确性的前提下，增加以下内容：
+   - 目的：补充文档适用读者范围、与其他文档的关系
+   - 范围：更明确地说明边界条件和不涉及的内容
+4. 不修改其他章节内容</div>
+        </div>
+      </div>
+
+      <!-- 02. 技能调用 (无 skill，显示空) -->
+      <div class="tl-section">
+        <div class="tl-line" style="background: linear-gradient(to bottom, #8B5CF6, rgba(139,92,246,0.1))"></div>
+        <div class="tl-dot" style="background:#8B5CF6; outline: 3px solid rgba(139,92,246,0.15); outline-offset:1px; left:-1px"></div>
+        <div class="tl-label" style="color:#8B5CF6">
+          02. 技能调用
+          <span class="source-badge real-data">真实数据</span>
+        </div>
+        <div class="tl-card tl-card-white" style="color:#94A3B8;font-size:11.5px;text-align:center;padding:16px">
+          <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px;opacity:0.5">info</span>
+          本轮无 Skill 调用（直接修改模式）
+        </div>
+      </div>
+
+      <!-- 03. 状态追踪 (包含草稿版本加载) -->
+      <div class="tl-section">
+        <div class="tl-line" style="background: linear-gradient(to bottom, #64748B, rgba(100,116,139,0.1))"></div>
+        <div class="tl-dot" style="background:#64748B; outline: 3px solid rgba(100,116,139,0.15); outline-offset:1px; left:-1px"></div>
+        <div class="tl-label" style="color:#64748B">
+          03. 状态追踪
+          <span class="source-badge reconstructed">推演示例</span>
+        </div>
+        <div class="tl-card tl-card-base">
+          <div class="status-list">
+            <div class="status-list-item">
+              <span class="material-symbols-outlined status-icon-done" style="font-variation-settings:'FILL' 1,'wght' 400;">task_alt</span>
+              <span>分析修改意图：扩充章节字数</span>
+            </div>
+            <div class="status-list-item">
+              <span class="material-symbols-outlined status-icon-done" style="font-variation-settings:'FILL' 1,'wght' 400;">task_alt</span>
+              <div>
+                <span class="status-highlight">已加载草稿：LLM集成配置管理模块需求规格文档</span>
+                <span style="color:#6366F1;font-weight:700;font-size:11px;margin-left:5px">v1.0.0</span>
+                <br><span style="font-size:10.5px;color:#94A3B8">requirements/.../2026-03-17/v1.0.0.md</span>
+              </div>
+            </div>
+            <div class="status-list-item">
+              <span class="material-symbols-outlined status-icon-done" style="font-variation-settings:'FILL' 1,'wght' 400;">task_alt</span>
+              <span>定位目标章节：第 1 节 文档概述</span>
+            </div>
+            <div class="status-list-item">
+              <span class="material-symbols-outlined status-icon-done" style="font-variation-settings:'FILL' 1,'wght' 400;">task_alt</span>
+              <span>生成修改后内容（140字 → 308字）</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 04. 向用户提问 (此轮无 question，演示) -->
+      <div class="tl-section">
+        <div class="tl-line" style="background: linear-gradient(to bottom, #F59E0B, rgba(245,158,11,0.1))"></div>
+        <div class="tl-dot" style="background:#F59E0B; outline: 3px solid rgba(245,158,11,0.15); outline-offset:1px; left:-1px"></div>
+        <div class="tl-label" style="color:#F59E0B">
+          04. 向用户提问
+          <span class="source-badge reconstructed">示例（此轮未触发）</span>
+        </div>
+        <div class="question-card">
+          <div class="question-label">
+            <span class="material-symbols-outlined" style="font-size:13px;font-variation-settings:'FILL' 1,'wght' 400;">help</span>
+            Agent 提问
+          </div>
+          <div class="question-text">
+            当前草稿的"1.3 定义"章节中，Token 的定义同时涵盖了"文本单位"和"API 配额"两个含义。是否需要将两者拆分为独立条目以提高清晰度？
+          </div>
+          <div style="margin-top:8px;font-size:10px;color:#B45309">此分组仅在 Agent 发出 question 事件时出现</div>
+        </div>
+      </div>
+
+      <!-- 05. 完成摘要 (真实 token 数据) -->
+      <div class="tl-section">
+        <div class="tl-line" style="background: transparent"></div>
+        <div class="tl-dot" style="background:#22C55E; outline: 3px solid rgba(34,197,94,0.2); outline-offset:1px; left:-1px; box-shadow: 0 0 8px rgba(34,197,94,0.4)"></div>
+        <div class="tl-label" style="color:#16A34A">
+          05. 完成摘要
+          <span class="source-badge real-data">Token: 真实</span>
+        </div>
+        <div class="done-card">
+          <div class="done-card-title">
+            <span class="material-symbols-outlined" style="font-size:15px;font-variation-settings:'FILL' 1,'wght' 500;">check_circle</span>
+            修改完成
+          </div>
+          <div class="done-stats">
+            <span class="done-stat">Prompt 3,046</span>
+            <span class="done-stat">Completion 1,785</span>
+            <span class="done-stat">合计 4,831 tokens</span>
+          </div>
+          <div style="margin-top:8px;font-size:11px;opacity:0.8">
+            生成文件：requirements/.../v1.0.0.md
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- footer stats -->
+    <div class="obs-footer">
+      <span>第 2 轮 · 对话</span>
+      <span>合计 4,831 tokens</span>
+    </div>
+  </aside>
+
+</main>
+
+<!-- 图例说明 -->
+<div style="position:fixed;bottom:12px;left:50%;transform:translateX(-50%);background:rgba(255,255,255,0.95);border:1px solid #E2E8F0;border-radius:10px;padding:8px 16px;font-size:11px;color:#64748B;display:flex;gap:14px;box-shadow:0 4px 16px rgba(0,0,0,0.08)">
+  <span>图例：</span>
+  <span><span class="source-badge real-data">真实数据</span> 来自 conversation_log.json</span>
+  <span><span class="source-badge reconstructed">推演示例</span> 基于 WS 事件流结构重建（thinking/status 未持久化）</span>
+</div>
+
+</body>
+</html>

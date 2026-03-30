@@ -78,8 +78,9 @@ def _load_filtered(vocab: str, module_id: Optional[str], facts_root: Path) -> Li
 
     matched = []
     for entry in entries:
-        # Check for "模块: {module_id}" tag (flexible spacing)
-        pattern = rf"模块[：:]\s*{re.escape(module_id)}\b"
+        # Accept Markdown emphasis around the field name, for example:
+        # "- **模块**: mod-llm" or "模块: mod-llm".
+        pattern = rf"(?:\*\*)?\s*模块\s*(?:\*\*)?\s*[：:]\s*{re.escape(module_id)}\b"
         if re.search(pattern, entry, re.IGNORECASE):
             matched.append(entry.strip())
 
@@ -161,5 +162,4 @@ def _parse_module_map(modules_md_content: str) -> dict:
 
     logger.debug(f"Parsed {len(module_map)} modules from modules.md: {list(module_map.keys())}")
     return module_map
-
 

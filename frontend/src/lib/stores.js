@@ -33,6 +33,29 @@ export function triggerConvRefresh() { convRefresh.update(n => n + 1); }
 
 // Notification: {type:'success'|'error'|'info', text, id}
 export const notification = writable(null);
+
+// Agent Observability Panel
+// ObsEvent: { type: 'thinking'|'skill'|'status'|'question'|'done', content, extra, ts }
+function createObsStore() {
+  const { subscribe, update, set } = writable({ panelOpen: false, events: [] });
+  return {
+    subscribe,
+    openPanel: () => update(s => ({ ...s, panelOpen: true })),
+    closePanel: () => update(s => ({ ...s, panelOpen: false })),
+    togglePanel: () => update(s => ({ ...s, panelOpen: !s.panelOpen })),
+    clearEvents: () => update(s => ({ ...s, events: [] })),
+    addEvent: (event) => update(s => {
+      // Merge consecutive thinking chunks into a single event
+      if (event.type === 'thinking' && s.events.length > 0 && s.events[s.events.length - 1].type === 'thinking') {
+        const updated = [...s.events];
+        updated[updated.length - 1] = { ...updated[updated.length - 1], content: updated[updated.length - 1].content + event.content };
+        return { ...s, events: updated };
+      }
+      return { ...s, events: [...s.events, { ...event, ts: event.ts || Date.now() }] };
+    }),
+  };
+}
+export const obsStore = createObsStore();
 let _notifTimer;
 export function notify(type, text) {
   clearTimeout(_notifTimer);

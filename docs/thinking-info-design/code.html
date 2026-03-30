@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Curator AI - Editorial Dashboard</title>
+<!-- Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "on-error": "#ffefef",
+              "surface": "#f5f7f9",
+              "on-primary-container": "#0a0081",
+              "error-dim": "#a70138",
+              "on-secondary": "#fbefff",
+              "on-primary": "#f4f1ff",
+              "tertiary-fixed-dim": "#ef81c4",
+              "surface-container-low": "#eef1f3",
+              "on-error-container": "#510017",
+              "on-tertiary-container": "#63054a",
+              "secondary-dim": "#740ec2",
+              "outline-variant": "#abadaf",
+              "surface-bright": "#f5f7f9",
+              "surface-container-high": "#dfe3e6",
+              "secondary-fixed": "#e5c6ff",
+              "on-tertiary": "#ffeef4",
+              "inverse-surface": "#0b0f10",
+              "inverse-primary": "#8083ff",
+              "on-surface": "#2c2f31",
+              "surface-container-lowest": "#ffffff",
+              "surface-container": "#e5e9eb",
+              "primary": "#4647d3",
+              "error-container": "#f74b6d",
+              "primary-fixed-dim": "#8387ff",
+              "error": "#b41340",
+              "primary-dim": "#3939c7",
+              "on-tertiary-fixed-variant": "#6e1354",
+              "secondary": "#8126cf",
+              "surface-dim": "#d0d5d8",
+              "tertiary-fixed": "#ff8ed2",
+              "on-background": "#2c2f31",
+              "on-secondary-fixed": "#4f0089",
+              "tertiary": "#963776",
+              "secondary-container": "#e5c6ff",
+              "primary-fixed": "#9396ff",
+              "background": "#f5f7f9",
+              "tertiary-dim": "#882a69",
+              "tertiary-container": "#ff8ed2",
+              "surface-container-highest": "#d9dde0",
+              "on-tertiary-fixed": "#3b002b",
+              "on-secondary-container": "#6900b4",
+              "outline": "#747779",
+              "surface-variant": "#d9dde0",
+              "primary-container": "#9396ff",
+              "on-secondary-fixed-variant": "#7511c3",
+              "surface-tint": "#4647d3",
+              "on-primary-fixed": "#000000",
+              "inverse-on-surface": "#9a9d9f",
+              "secondary-fixed-dim": "#dbb4ff",
+              "on-surface-variant": "#595c5e",
+              "on-primary-fixed-variant": "#0e009d"
+            },
+            fontFamily: {
+              "headline": ["Plus Jakarta Sans"],
+              "body": ["Inter"],
+              "label": ["Inter"]
+            },
+            borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body { font-family: 'Inter', sans-serif; background-color: #f5f7f9; }
+        h1, h2, h3, .font-headline { font-family: 'Plus Jakarta Sans', sans-serif; }
+        
+        /* Panel transition logic */
+        #cot-panel { transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), width 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .panel-collapsed { transform: translateX(100%); width: 0 !important; }
+        .chat-expanded { right: 0 !important; }
+        
+        /* Floating Trigger */
+        #cot-trigger { display: none; }
+        .trigger-visible { display: flex !important; }
+    </style>
+</head>
+<body class="bg-surface text-on-surface flex overflow-hidden h-screen">
+<!-- SideNavBar Component -->
+<aside class="flex flex-col h-full p-6 w-72 bg-[#eef1f3] dark:bg-slate-900 z-50 transition-all duration-300">
+<div class="flex items-center gap-3 mb-12">
+<div class="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white shadow-lg shadow-primary/20">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">auto_awesome</span>
+</div>
+<div>
+<h1 class="text-xl font-bold text-[#2c2f31] dark:text-white leading-tight">Editorial AI</h1>
+<p class="text-[10px] uppercase tracking-widest text-[#2c2f31]/40 font-bold">The Digital Curator</p>
+</div>
+</div>
+<nav class="flex-1 space-y-2">
+<button class="w-full flex items-center gap-3 px-4 py-3 text-[#4647d3] font-bold bg-[#ffffff] rounded-lg transition-all scale-98 active:opacity-80">
+<span class="material-symbols-outlined">add</span>
+<span class="font-['Plus_Jakarta_Sans'] text-sm font-medium">New Chat</span>
+</button>
+<button class="w-full flex items-center gap-3 px-4 py-3 text-[#2c2f31]/60 hover:text-[#2c2f31] hover:bg-[#d9dde0] dark:hover:bg-slate-800 transition-colors rounded-lg">
+<span class="material-symbols-outlined">history</span>
+<span class="font-['Plus_Jakarta_Sans'] text-sm font-medium">History</span>
+</button>
+<button class="w-full flex items-center gap-3 px-4 py-3 text-[#2c2f31]/60 hover:text-[#2c2f31] hover:bg-[#d9dde0] dark:hover:bg-slate-800 transition-colors rounded-lg">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-['Plus_Jakarta_Sans'] text-sm font-medium">Settings</span>
+</button>
+<button class="w-full flex items-center gap-3 px-4 py-3 text-[#2c2f31]/60 hover:text-[#2c2f31] hover:bg-[#d9dde0] dark:hover:bg-slate-800 transition-colors rounded-lg">
+<span class="material-symbols-outlined">help_outline</span>
+<span class="font-['Plus_Jakarta_Sans'] text-sm font-medium">Help</span>
+</button>
+</nav>
+<div class="mt-auto pt-6 border-t border-outline-variant/10">
+<!-- New Management Item -->
+<button class="w-full flex items-center gap-3 px-4 py-3 mb-4 text-[#2c2f31]/60 hover:text-[#2c2f31] hover:bg-[#d9dde0] dark:hover:bg-slate-800 transition-colors rounded-lg">
+<span class="material-symbols-outlined">admin_panel_settings</span>
+<span class="font-['Plus_Jakarta_Sans'] text-sm font-medium">Management</span>
+</button>
+<div class="flex items-center gap-3 px-2">
+<div class="w-8 h-8 rounded-full bg-surface-container-highest flex items-center justify-center overflow-hidden">
+<img alt="User profile" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBZYvbYpvWYOJIofTXxwfdFnN6eahayhjMWefbYbWZHvdtA9goGulpZkDQDlxNkbFSq3LofS6iXD8q3H3UaQ7ezVjbIfukxrTjmbbiN6qvJM2O5if7ZQMkbTXj5Kx1bkpkxswzAM59SeUZIPlIVSd-YLdOf7DSxwcHMked1fhZ7BPgNese2w7zDvRFcm89HDmnYq1tLyLzX5Y5JTqgRpG7NAJan0mixSnAUqFRMvO8FoqfVLKt1yF9ly3Gl1Cck6B9I63wzdMEGaA"/>
+</div>
+<div class="flex-1 min-w-0">
+<p class="text-xs font-bold truncate">Alex Rivera</p>
+<p class="text-[10px] text-on-surface/40 truncate">Free Plan</p>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="flex-1 flex flex-col relative h-full min-w-0 transition-all duration-300" id="main-content" style="margin-right: 40%;">
+<!-- TopNavBar Component -->
+<header class="fixed top-0 right-0 left-72 h-16 flex items-center justify-between px-8 z-40 bg-[#f5f7f9]/70 backdrop-blur-xl transition-all" id="top-nav" style="right: 40%;">
+<div class="flex items-center gap-6">
+<h2 class="text-lg font-bold tracking-tight text-[#2c2f31] dark:text-white">Curator AI</h2>
+<div class="h-4 w-[1px] bg-outline-variant/20"></div>
+<span class="text-xs font-medium text-on-surface/40">Observability Dashboard</span>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center bg-surface-container-low rounded-full px-3 py-1.5 gap-2">
+<span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+<span class="text-[10px] font-bold text-on-surface/60 uppercase tracking-tighter">System Healthy</span>
+</div>
+<div class="flex items-center gap-2">
+<button class="p-2 text-[#2c2f31]/70 hover:opacity-70 transition-opacity">
+<span class="material-symbols-outlined">visibility</span>
+</button>
+<button class="p-2 text-[#2c2f31]/70 hover:opacity-70 transition-opacity">
+<span class="material-symbols-outlined">share</span>
+</button>
+<button class="p-2 text-[#2c2f31]/70 hover:opacity-70 transition-opacity">
+<span class="material-symbols-outlined">more_vert</span>
+</button>
+</div>
+</div>
+</header>
+<!-- Chat Canvas -->
+<div class="flex-1 mt-16 overflow-y-auto px-8 py-12 flex flex-col items-center w-full">
+<div class="w-full max-w-3xl space-y-10">
+<!-- User Message -->
+<div class="flex flex-col items-end group">
+<div class="bg-surface-container-lowest p-6 rounded-2xl rounded-tr-none shadow-sm max-w-[85%] border border-outline-variant/5">
+<p class="text-sm text-on-surface leading-relaxed">
+                        Analyze the current market trends for generative AI in creative industries and generate a conceptual image representing "The future of curated data."
+                    </p>
+</div>
+<span class="text-[10px] text-on-surface/30 mt-2 font-bold uppercase tracking-widest mr-1">Just now</span>
+</div>
+<!-- AI Message -->
+<div class="flex flex-col items-start">
+<div class="flex items-center gap-3 mb-4">
+<div class="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-sm" style="font-variation-settings: 'FILL' 1;">auto_awesome</span>
+</div>
+<span class="text-xs font-bold text-[#2c2f31] uppercase tracking-widest">The Curator</span>
+</div>
+<div class="space-y-6 max-w-[90%]">
+<p class="text-sm text-on-surface leading-loose font-body">
+                        Based on real-time data from the last quarter, the generative AI market in creative industries has shifted from tool-experimentation to **workflow integration**. Key sectors like architectural visualization and high-end editorial design are seeing a 40% increase in productivity via automated curation agents.
+                    </p>
+<div class="relative group">
+<div class="aspect-[16/9] w-full rounded-2xl overflow-hidden bg-surface-container-high border border-outline-variant/10 shadow-xl">
+<img alt="AI Generated Concept" class="w-full h-full object-cover grayscale-[20%] hover:grayscale-0 transition-all duration-700" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAV882VWhAwsVfAVkq_LWPaNwKmWATqzAxDMBz3e0S0TsOoefwGrXfB2Rbbv70Bt2Xf94tyeTXv9XUZ_YnaoKGlVoLGzDlRplQlsBctXKZe13pWMPy0zYi5jf9Vu6FxxBHigdxlFXqR4Tx4PWgO4-rFYgzDQ0Kr1fbVBMYpdX849fbm8BXbM4OnYg9B5JXgripf-njPy_wBGK2UxCbAcix8tUoimn96No8-4Bl8_Wrmwl0Q7B1lCDIxuhDI8WOfHsZcIqkl4J133Q"/>
+<div class="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent"></div>
+<div class="absolute bottom-4 left-4 flex items-center gap-2">
+<span class="bg-white/20 backdrop-blur-md px-3 py-1 rounded-full text-[10px] text-white font-bold tracking-tighter border border-white/20">CONCEPT: CURATED DATA</span>
+</div>
+</div>
+</div>
+<p class="text-sm text-on-surface leading-loose font-body">
+                        The visual above captures the essence of this transition: raw data streams being refined into crystalline focal points. I've broken down my reasoning in the **Chain of Thought** panel for full transparency.
+                    </p>
+</div>
+<div class="flex items-center gap-4 mt-8">
+<button class="flex items-center gap-2 text-[10px] font-bold text-on-surface/40 hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-sm">thumb_up</span> Helpful
+                    </button>
+<button class="flex items-center gap-2 text-[10px] font-bold text-on-surface/40 hover:text-error transition-colors">
+<span class="material-symbols-outlined text-sm">thumb_down</span> Not Helpful
+                    </button>
+<button class="flex items-center gap-2 text-[10px] font-bold text-on-surface/40 hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-sm">content_copy</span> Copy
+                    </button>
+</div>
+</div>
+</div>
+</div>
+<!-- Prompt Bar -->
+<div class="p-8 pb-12 w-full max-w-3xl mx-auto">
+<div class="relative flex items-center bg-surface-container-lowest rounded-full p-2 pr-4 shadow-2xl shadow-primary/5 border border-outline-variant/10">
+<button class="p-3 text-on-surface/40 hover:text-primary transition-colors">
+<span class="material-symbols-outlined">attach_file</span>
+</button>
+<input class="flex-1 bg-transparent border-none focus:ring-0 text-sm py-2 px-2 placeholder:text-on-surface/30" placeholder="Ask The Curator anything..." type="text"/>
+<button class="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white shadow-lg shadow-primary/30 hover:scale-105 active:scale-95 transition-transform">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">send</span>
+</button>
+</div>
+<p class="text-center text-[10px] text-on-surface/30 mt-4 uppercase tracking-[0.2em] font-bold">Encrypted via Curatorial Protocol 2.4</p>
+</div>
+</main>
+<!-- Floating Toggle Trigger (for collapsed state) -->
+<button class="fixed right-0 top-1/2 -translate-y-1/2 z-[60] bg-white border border-outline-variant/20 rounded-l-xl shadow-lg p-3 flex flex-col items-center gap-1 hover:bg-surface transition-all hidden" id="cot-trigger" onclick="togglePanel()">
+<div class="relative">
+<span class="material-symbols-outlined text-primary" style="font-variation-settings: 'FILL' 1;">psychology</span>
+<span class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white animate-pulse"></span>
+</div>
+<span class="[writing-mode:vertical-lr] text-[10px] font-bold text-on-surface/60 uppercase tracking-widest mt-2">Chain of Thought</span>
+</button>
+<!-- Sliding Drawer Panel: Chain of Thought -->
+<aside class="fixed right-0 top-0 h-screen bg-white border-l border-outline-variant/10 flex flex-col shadow-[-20px_0_50px_rgba(70,71,211,0.03)] z-50 overflow-visible w-[40%]" id="cot-panel">
+<!-- Collapse/Expand Toggle on Edge -->
+<button class="absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-12 bg-white border border-outline-variant/20 rounded-lg flex items-center justify-center shadow-sm hover:text-primary transition-colors z-[60]" onclick="togglePanel()">
+<span class="material-symbols-outlined text-xl" id="toggle-icon">chevron_right</span>
+</button>
+<div class="h-16 flex items-center justify-between px-8 bg-surface-container-lowest border-b border-outline-variant/5">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-xl" style="font-variation-settings: 'FILL' 1;">analytics</span>
+<h3 class="font-headline font-bold text-base tracking-tight">Chain of Thought</h3>
+</div>
+<button class="p-2 text-on-surface/40 hover:text-on-surface transition-colors" onclick="togglePanel()">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+<div class="flex-1 overflow-y-auto p-8 space-y-10">
+<!-- 1. Reasoning Step -->
+<section class="relative pl-6">
+<div class="absolute left-0 top-1 bottom-0 w-[2px] bg-gradient-to-b from-primary via-primary/20 to-transparent"></div>
+<div class="flex items-center gap-2 mb-4">
+<div class="absolute left-[-5px] top-1 w-2.5 h-2.5 rounded-full bg-primary ring-4 ring-primary/10"></div>
+<span class="text-[10px] font-extrabold text-primary uppercase tracking-[0.2em]">01. Reasoning Step</span>
+</div>
+<div class="bg-surface-container-low/50 p-5 rounded-xl border border-outline-variant/5">
+<p class="text-xs text-on-surface/80 leading-relaxed font-body">
+                    User intent identified as multi-modal analysis. Context window indicates priority on market data accuracy followed by metaphorical visual synthesis. Identifying cross-sector trends in AI adoption.
+                </p>
+</div>
+</section>
+<!-- 2. Tool Execution -->
+<section class="relative pl-6">
+<div class="absolute left-0 top-1 bottom-0 w-[2px] bg-gradient-to-b from-secondary via-secondary/20 to-transparent"></div>
+<div class="flex items-center gap-2 mb-4">
+<div class="absolute left-[-5px] top-1 w-2.5 h-2.5 rounded-full bg-secondary ring-4 ring-secondary/10"></div>
+<span class="text-[10px] font-extrabold text-secondary uppercase tracking-[0.2em]">02. Tool Execution</span>
+</div>
+<div class="space-y-3">
+<div class="flex items-center justify-between p-4 bg-surface-container-lowest border border-outline-variant/10 rounded-xl">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-secondary" style="font-variation-settings: 'FILL' 1;">search</span>
+<div>
+<p class="text-xs font-bold">Google Search</p>
+<p class="text-[10px] text-on-surface/40">Query: "GenAI creative industry ROI 2024"</p>
+</div>
+</div>
+<span class="material-symbols-outlined text-emerald-500 text-lg">check_circle</span>
+</div>
+<div class="flex flex-col p-4 bg-surface-container-lowest border border-outline-variant/10 rounded-xl">
+<div class="flex items-center justify-between mb-3">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-secondary" style="font-variation-settings: 'FILL' 1;">image_search</span>
+<div>
+<p class="text-xs font-bold">Image Generation</p>
+<p class="text-[10px] text-on-surface/40">DALL-E 3 Optimized</p>
+</div>
+</div>
+<span class="material-symbols-outlined text-emerald-500 text-lg">check_circle</span>
+</div>
+<div class="bg-surface-container-low p-2 rounded-lg text-[9px] font-mono text-on-surface/60 overflow-hidden text-ellipsis whitespace-nowrap">
+                        prompt: "abstract ethereal glowing nodes connecting, minimal light gray, blue accents, 8k"
+                    </div>
+</div>
+</div>
+</section>
+<!-- 3. Validation Step -->
+<section class="relative pl-6">
+<div class="absolute left-0 top-1 bottom-0 w-[2px] bg-gradient-to-b from-tertiary via-tertiary/20 to-transparent"></div>
+<div class="flex items-center gap-2 mb-4">
+<div class="absolute left-[-5px] top-1 w-2.5 h-2.5 rounded-full bg-tertiary ring-4 ring-tertiary/10"></div>
+<span class="text-[10px] font-extrabold text-tertiary uppercase tracking-[0.2em]">03. Validation Step</span>
+</div>
+<div class="bg-surface-container-low/50 p-5 rounded-xl border border-outline-variant/5">
+<ul class="space-y-2">
+<li class="flex items-start gap-2">
+<span class="material-symbols-outlined text-[14px] mt-0.5 text-emerald-500">task_alt</span>
+<span class="text-[11px] text-on-surface/70 leading-tight">Content safety check passed.</span>
+</li>
+<li class="flex items-start gap-2">
+<span class="material-symbols-outlined text-[14px] mt-0.5 text-emerald-500">task_alt</span>
+<span class="text-[11px] text-on-surface/70 leading-tight">Attribution required for architectural stats.</span>
+</li>
+<li class="flex items-start gap-2">
+<span class="material-symbols-outlined text-[14px] mt-0.5 text-amber-500">warning</span>
+<span class="text-[11px] text-on-surface/70 leading-tight">Visual contrast slightly below UI threshold; adjusted.</span>
+</li>
+</ul>
+</div>
+</section>
+<!-- 4. Final Decision -->
+<section class="relative pl-6">
+<div class="absolute left-0 top-1 w-[2px] h-4 bg-primary"></div>
+<div class="flex items-center gap-2 mb-4">
+<div class="absolute left-[-5px] top-1 w-2.5 h-2.5 rounded-full bg-primary shadow-lg shadow-primary/30"></div>
+<span class="text-[10px] font-extrabold text-on-surface uppercase tracking-[0.2em]">04. Final Decision</span>
+</div>
+<div class="bg-primary p-5 rounded-xl text-white shadow-xl shadow-primary/10">
+<p class="text-xs font-medium leading-relaxed">
+                    Synthesize response focusing on workflow shifts. Deliver visual concept via inline curated frame. Maintain professional editorial tone.
+                </p>
+</div>
+</section>
+</div>
+<div class="p-6 bg-surface-container-low/30 border-t border-outline-variant/5">
+<div class="flex items-center justify-between text-[10px] font-bold text-on-surface/30 uppercase tracking-widest">
+<span>Total Latency: 4.2s</span>
+<span>Tokens: 1,402</span>
+</div>
+</div>
+</aside>
+<script>
+    function togglePanel() {
+        const panel = document.getElementById('cot-panel');
+        const main = document.getElementById('main-content');
+        const nav = document.getElementById('top-nav');
+        const trigger = document.getElementById('cot-trigger');
+        const icon = document.getElementById('toggle-icon');
+
+        panel.classList.toggle('panel-collapsed');
+        main.classList.toggle('chat-expanded');
+        nav.classList.toggle('chat-expanded');
+        trigger.classList.toggle('trigger-visible');
+
+        if (panel.classList.contains('panel-collapsed')) {
+            main.style.marginRight = '0';
+            nav.style.right = '0';
+            icon.textContent = 'chevron_left';
+        } else {
+            main.style.marginRight = '40%';
+            nav.style.right = '40%';
+            icon.textContent = 'chevron_right';
+        }
+    }
+</script>
+</body></html>

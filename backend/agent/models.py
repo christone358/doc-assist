@@ -74,7 +74,7 @@ class SkillInfo(BaseModel):
     version: Optional[str] = None
     tags: List[str] = []
     capabilities: List[str] = []
-    content: Optional[str] = None   # Full skill.md body (instructions for LLM)
+    skill_md_path: Optional[str] = None  # Absolute path to skill.md, for lazy content loading
 
 
 class SkillListResponse(BaseModel):

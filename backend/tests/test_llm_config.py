@@ -8,7 +8,9 @@ from pathlib import Path
 from llm.service import (
     LLMConfigManager, LLMConfig, LLMProvider,
     _encrypt_key, _decrypt_key,
+    _normalize_api_base, LLMService,
 )
+from agent.adk.llm_adapter import _normalize_litellm_api_base
 
 
 @pytest.fixture
@@ -135,3 +137,58 @@ def test_api_key_not_stored_in_plain(config_path):
         raw = json.load(f)
     items = raw["configs"]
     assert all("test-key" not in str(item.get("api_key_encrypted", "")) for item in items)
+
+
+def test_normalize_ollama_api_base_appends_v1():
+    assert (
+        _normalize_api_base("http://192.168.5.162:11434/", LLMProvider.OLLAMA)
+        == "http://192.168.5.162:11434/v1"
+    )
+    assert (
+        _normalize_api_base("http://192.168.5.162:11434/v1", LLMProvider.OLLAMA)
+        == "http://192.168.5.162:11434/v1"
+    )
+
+
+def test_make_client_normalizes_ollama_api_base():
+    svc = LLMService()
+    cfg = make_config(
+        provider=LLMProvider.OLLAMA,
+        model_name="qwen2.5-coder:14b-instruct-q5_K_S",
+        api_base="http://192.168.5.162:11434/",
+    )
+
+    client = svc._make_client(cfg)
+
+    assert client.api_base == "http://192.168.5.162:11434/v1"
+    assert client.model == "qwen2.5-coder:14b-instruct-q5_K_S"
+
+
+def test_normalize_litellm_ollama_api_base_strips_v1():
+    assert (
+        _normalize_litellm_api_base("http://192.168.5.162:11434/v1/", "ollama")
+        == "http://192.168.5.162:11434"
+    )
+
+
+@pytest.mark.asyncio
+async def test_test_connection_handles_complete_tuple(monkeypatch):
+    from llm import routes
+    import llm.service as llm_service
+
+    cfg = make_config(id="ollama-test", provider=LLMProvider.OLLAMA)
+
+    class DummyManager:
+        def get(self, config_id):
+            return cfg if config_id == cfg.id else None
+
+    async def fake_complete(self, system_prompt, messages, user_message, config_id=None):
+        return "OK", {"total_tokens": 1}
+
+    monkeypatch.setattr(routes, "_manager", DummyManager())
+    monkeypatch.setattr(llm_service.LLMService, "complete", fake_complete)
+
+    result = await routes.test_connection(cfg.id)
+
+    assert result["success"] is True
+    assert result["response"] == "OK"

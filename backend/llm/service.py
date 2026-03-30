@@ -1,7 +1,7 @@
 """
 LLM Service - Manages LLM model configurations and provides unified API.
 
-Supports DeepSeek and QWen models with configuration management,
+Supports DeepSeek, QWen, and Ollama models with configuration management,
 retry logic, and automatic fallback.
 """
 
@@ -13,6 +13,7 @@ from typing import Optional, List, Dict, Any, AsyncIterator
 from dataclasses import dataclass, asdict, field
 from enum import Enum
 import hashlib
+from urllib.parse import urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ LLM_CONFIG_FILE = Path(__file__).parent.parent / "llm_configs.json"
 class LLMProvider(str, Enum):
     DEEPSEEK = "deepseek"
     QWEN = "qwen"
+    OLLAMA = "ollama"
 
 
 @dataclass
@@ -65,6 +67,23 @@ def _decrypt_key(encrypted_key: str) -> str:
     """Reverse the obfuscation."""
     import base64
     return base64.b64decode(encrypted_key.encode()).decode()
+
+
+def _normalize_api_base(api_base: str, provider: LLMProvider) -> str:
+    """Normalize provider-specific base URLs."""
+    normalized = api_base.strip().rstrip("/")
+    if provider != LLMProvider.OLLAMA:
+        return normalized
+
+    parsed = urlsplit(normalized)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/v1"):
+        return normalized
+
+    # Ollama's OpenAI-compatible endpoint lives under /v1, but users often
+    # paste the server root (for example http://host:11434/).
+    path = f"{path}/v1" if path else "/v1"
+    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
 
 
 # =============================================================================
@@ -170,6 +189,13 @@ class DeepSeekClient:
                         except json.JSONDecodeError:
                             continue
         yield {"usage": usage}
+
+
+class OllamaClient(DeepSeekClient):
+    """Client for Ollama's OpenAI-compatible API."""
+
+    def __init__(self, api_key: str, api_base: str, model: str):
+        super().__init__(api_key, _normalize_api_base(api_base, LLMProvider.OLLAMA), model)
 
 
 class QWenClient:
@@ -380,15 +406,18 @@ class LLMService:
 
     def _make_client(self, config: LLMConfig):
         """Create the appropriate client for the provider."""
-        if not config.api_base or not config.api_base.startswith(("http://", "https://")):
+        api_base = config.api_base.strip()
+        if not api_base or not api_base.startswith(("http://", "https://")):
             raise ValueError(f"api_base 无效（当前值：'{config.api_base}'）。请在 LLM 配置中填写完整的 URL，例如 https://api.deepseek.com")
         if not config.model_name:
             raise ValueError("model_name 不能为空，请在 LLM 配置中填写模型名称，例如 deepseek-chat")
         key = _decrypt_key(config.api_key_encrypted)
         if config.provider == LLMProvider.DEEPSEEK:
-            return DeepSeekClient(key, config.api_base, config.model_name)
+            return DeepSeekClient(key, api_base, config.model_name)
         elif config.provider == LLMProvider.QWEN:
-            return QWenClient(key, config.api_base, config.model_name)
+            return QWenClient(key, api_base, config.model_name)
+        elif config.provider == LLMProvider.OLLAMA:
+            return OllamaClient(key, api_base, config.model_name)
         raise ValueError(f"Unsupported provider: {config.provider}")
 
     def _build_messages(
@@ -417,7 +446,7 @@ class LLMService:
         )
 
         if not cfg:
-            return "⚠️ 未配置 LLM 模型。请在系统设置中添加 DeepSeek 或 QWen 模型配置。", None
+            return "⚠️ 未配置 LLM 模型。请在系统设置中添加 DeepSeek、QWen 或 Ollama 模型配置。", None
 
         client = self._make_client(cfg)
         msgs = self._build_messages(system_prompt, messages, user_message)
@@ -452,7 +481,7 @@ class LLMService:
         )
 
         if not cfg:
-            yield "⚠️ 未配置 LLM 模型。请在系统设置中添加 DeepSeek 或 QWen 模型配置。"
+            yield "⚠️ 未配置 LLM 模型。请在系统设置中添加 DeepSeek、QWen 或 Ollama 模型配置。"
             yield {"usage": None}
             return
 
