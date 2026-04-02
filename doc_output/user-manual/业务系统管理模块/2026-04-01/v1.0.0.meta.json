@@ -1,0 +1,19 @@
+{
+  "doc_type": "user-manual",
+  "doc_type_label": "用户手册",
+  "doc_name": "业务系统管理模块",
+  "requested_name": "业务系统管理模块",
+  "version": "1.0.0",
+  "date": "2026-04-01",
+  "created_at": "2026-04-01T07:02:45.910672Z",
+  "conversation_id": "2bb92dc0-859a-437a-bcec-c57e9bd3b757",
+  "round_id": null,
+  "change_summary": null,
+  "previous_version": null,
+  "skill_id": null,
+  "aliases": [
+    "业务系统管理模块",
+    "业务系统管理",
+    "业务系统模块"
+  ]
+}

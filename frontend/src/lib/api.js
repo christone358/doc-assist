@@ -47,7 +47,12 @@ export const llmConfigs = {
 
 // ── Documents ──────────────────────────────────────────────────────────────
 export const documents = {
-  list:       (doc_type)              => req('GET', `/documents${doc_type ? `?doc_type=${encodeURIComponent(doc_type)}` : ''}`),
+  list:       (doc_type) => {
+    const params = new URLSearchParams();
+    if (doc_type) params.set('doc_type', doc_type);
+    const queryString = params.toString();
+    return req('GET', `/documents${queryString ? `?${queryString}` : ''}`);
+  },
   versions:   (doc_type, doc_name)    => req('GET', `/documents/${encodeURIComponent(doc_type)}/${encodeURIComponent(doc_name)}/versions`),
   latest:     (doc_type, doc_name)    => req('GET', `/documents/${encodeURIComponent(doc_type)}/${encodeURIComponent(doc_name)}/latest`),
   getVersion: (doc_type, doc_name, date, ver) =>
@@ -60,6 +65,7 @@ export const factInfo = {
     const q = new URLSearchParams(params).toString();
     return req('GET', `/fact-info${q ? '?' + q : ''}`);
   },
+  refresh: () => req('POST', '/fact-info/refresh'),
   get: (id) => req('GET', `/fact-info/${id}`),
 };
 

@@ -12,7 +12,11 @@ create_saved_doc_tools(ctx) 返回带进程内上下文的异步工具对，
 import logging
 from typing import Optional, Tuple, TYPE_CHECKING
 
-from google.adk.tools import ToolContext
+try:
+    from google.adk.tools import ToolContext
+except ModuleNotFoundError:  # pragma: no cover - fallback for unit tests
+    class ToolContext:  # type: ignore[override]
+        pass
 
 if TYPE_CHECKING:
     from agent.adk.runner_adapter import ConversationContext
@@ -112,6 +116,24 @@ def create_saved_doc_tools(ctx: "ConversationContext") -> Tuple:
         ctx.loaded_base_draft = content
         # 记录解析后的 canonical doc_name，供 write_document 保存时保持版本连续性
         ctx.loaded_base_doc_name = ref.doc_name
+        ctx.current_module_name = ref.doc_name
+
+        try:
+            from project_fact_modules import ModuleArchiveRepository
+            from agent.adk.fact_tools import _FACTS_ROOT
+
+            if _FACTS_ROOT.exists():
+                repo = ModuleArchiveRepository(_FACTS_ROOT)
+                module_id, candidates = repo.resolve_module_reference(ref.doc_name)
+                if module_id and not candidates:
+                    module = repo.get_module(module_id)
+                    ctx.loaded_base_module_id = module_id
+                    ctx.current_module_id = module_id
+                    if module:
+                        ctx.current_system_name = module.get("system") or ctx.current_system_name
+                        ctx.current_subsystem_name = module.get("subsystem") or ctx.current_subsystem_name
+        except Exception as e:  # pragma: no cover - 模块身份恢复只是增强能力
+            logger.warning(f"load_saved_document: 恢复模块身份失败 doc_name={ref.doc_name}: {e}")
 
         summary = (
             f"已加载 {ref.doc_name} v{ref.version} · {ref.date}，"

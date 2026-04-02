@@ -1,0 +1,23 @@
+{
+  "doc_type": "requirements",
+  "doc_type_label": "需求规格",
+  "doc_name": "LLM集成模块",
+  "requested_name": "LLM集成模块需求规格说明书",
+  "version": "1.0.0",
+  "date": "2026-03-17",
+  "created_at": "2026-03-31T05:55:51.441797Z",
+  "conversation_id": "c477f587-c528-4628-85e3-557146e2ddb6",
+  "round_id": null,
+  "change_summary": null,
+  "previous_version": null,
+  "skill_id": null,
+  "aliases": [
+    "LLM集成模块",
+    "LLM集成模块需求规格说明书",
+    "集成模块需求规格说明书",
+    "LLM集成",
+    "集成模块"
+  ],
+  "source_path": "backend/docs/requirements/LLM集成模块需求规格说明书/2026-03-17/v1.0.0.md",
+  "source_version": "1.0.0"
+}

@@ -3,10 +3,6 @@ name: write-requirements
 description: 根据用户需求和项目事实信息，编写符合规范的软件需求规格文档（SRS）。当用户提到编写需求文档、需求规格、功能需求、用户故事、用例说明等时触发。
 type: requirements
 version: 1.0.0
-tags:
-  - requirements
-  - srs
-  - specification
 capabilities:
   - 软件需求规格文档（SRS）
   - 功能需求分析

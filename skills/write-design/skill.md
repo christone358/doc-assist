@@ -3,10 +3,6 @@ name: write-design
 description: 根据需求和项目事实信息，编写软件设计方案文档，包括架构设计、模块设计和接口设计。当用户提到编写设计方案、技术方案、架构设计、模块设计、接口设计等时触发。
 type: design
 version: 1.0.0
-tags:
-  - design
-  - architecture
-  - technical-design
 capabilities:
   - 软件设计方案文档
   - 架构设计说明

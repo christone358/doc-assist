@@ -105,6 +105,35 @@
 
   let currentAssistantMsg = null;
 
+  function ensureAssistantMessage() {
+    if (!currentAssistantMsg) {
+      currentAssistantMsg = {
+        role: 'assistant',
+        content: '',
+        docs: [],
+        ts: new Date().toISOString(),
+      };
+      messages.update(m => [...m, currentAssistantMsg]);
+    }
+    return currentAssistantMsg;
+  }
+
+  function toggleMessageSection(msg, key) {
+    msg[key] = !msg[key];
+    messages.update(m => m);
+  }
+
+  function hasBubbleContent(msg) {
+    return !!(
+      msg.content ||
+      msg.docs?.length ||
+      msg.metaSkillName ||
+      msg.metaUsage ||
+      msg.hasDraft ||
+      msg.isError
+    );
+  }
+
   function openSocket(convId) {
     const sock = openChatSocket(convId, handleWSMessage);
     sock.addEventListener('close', () => {
@@ -127,46 +156,44 @@
       if (data.type === 'skill_start') {
         obsStore.addEvent({ type: 'skill', content: data.content || `Skill: ${data.skill_id}`, extra: { reason: data.reason } });
       } else {
-        obsStore.addEvent({ type: 'status', content: data.content, extra: { sub: data.sub, tool: data.tool } });
+        obsStore.addEvent({
+          type: 'status',
+          content: data.content,
+          extra: { sub: data.sub, tool: data.tool, outcome: data.outcome }
+        });
       }
-      // Left bubble statusSteps: only high-level steps, skip detail sub-events
+      // 左侧不展示调用链和过程步骤，这些信息仅在右侧过程明细展示
       if (data.sub === 'detail') return;
-      let stepText = data.type === 'skill_start'
-        ? (data.content || `正在使用 Skill: ${data.skill_id}`)
-        : data.content;
-      if (data.type === 'skill_start' && data.reason) {
-        stepText = `${stepText} · ${data.reason}`;
-      }
-      if (!currentAssistantMsg) {
-        currentAssistantMsg = { role: 'assistant', content: '', docs: [], statusSteps: [stepText], ts: new Date().toISOString() };
-        messages.update(m => [...m, currentAssistantMsg]);
-      } else {
-        currentAssistantMsg.statusSteps = [...(currentAssistantMsg.statusSteps || []), stepText];
-        messages.update(m => m);
-      }
     } else if (data.type === 'subagent_start') {
       obsStore.addEvent({ type: 'subagent_start', content: data.skill_name || data.skill_id, extra: { skill_id: data.skill_id, skill_name: data.skill_name } });
     } else if (data.type === 'question') {
       obsStore.addEvent({ type: 'question', content: data.content });
       // Finalize the current process bubble (thinking/status), start a fresh one for the question
-      currentAssistantMsg = { role: 'assistant', content: data.content, docs: [], statusSteps: [], ts: new Date().toISOString() };
+      currentAssistantMsg = { role: 'assistant', content: data.content, docs: [], ts: new Date().toISOString() };
       messages.update(m => [...m, currentAssistantMsg]);
       scrollToBottom();
     } else if (data.type === 'thinking') {
       obsStore.addEvent({ type: 'thinking', content: data.content });
-      if (!currentAssistantMsg) {
-        currentAssistantMsg = { role: 'assistant', content: '', docs: [], statusSteps: [], thinking: '', thinkingOpen: false, ts: new Date().toISOString() };
-        messages.update(m => [...m, currentAssistantMsg]);
-      }
-      currentAssistantMsg.thinking = (currentAssistantMsg.thinking || '') + data.content;
+      const msg = ensureAssistantMessage();
+      msg.thinking = (msg.thinking || '') + data.content;
+      if (msg.thinkingOpen === undefined) msg.thinkingOpen = true;
+      messages.update(m => m);
+      scrollToBottom();
+    } else if (data.type === 'reflection') {
+      const msg = ensureAssistantMessage();
+      msg.reflection = (msg.reflection || '') + data.content;
+      if (msg.reflectionOpen === undefined) msg.reflectionOpen = false;
+      messages.update(m => m);
+      scrollToBottom();
+    } else if (data.type === 'summary') {
+      const msg = ensureAssistantMessage();
+      msg.summary = (msg.summary || '') + data.content;
+      if (msg.summaryOpen === undefined) msg.summaryOpen = false;
       messages.update(m => m);
       scrollToBottom();
     } else if (data.type === 'text') {
-      if (!currentAssistantMsg) {
-        currentAssistantMsg = { role: 'assistant', content: '', docs: [], statusSteps: [], ts: new Date().toISOString() };
-        messages.update(m => [...m, currentAssistantMsg]);
-      }
-      currentAssistantMsg.content += data.content;
+      const msg = ensureAssistantMessage();
+      msg.content += data.content;
       messages.update(m => m);
       scrollToBottom();
     } else if (data.type === 'document') {
@@ -182,7 +209,6 @@
         currentAssistantMsg.metaSkillReason = data.skill_reason || null;
         currentAssistantMsg.metaUsage = data.usage || null;
         currentAssistantMsg.hasDraft = data.has_draft === true;
-        if (currentAssistantMsg.thinking) currentAssistantMsg.thinkingOpen = false;
         messages.update(m => m);
       }
       streaming.set(false);
@@ -196,7 +222,6 @@
           role: 'assistant',
           content: data.content || '发生错误',
           docs: [],
-          statusSteps: [],
           ts: new Date().toISOString(),
           isError: true
         };
@@ -204,7 +229,6 @@
       } else {
         currentAssistantMsg.content = data.content || '发生错误';
         currentAssistantMsg.isError = true;
-        if (currentAssistantMsg.thinking) currentAssistantMsg.thinkingOpen = false;
         messages.update(m => m);
       }
       streaming.set(false);
@@ -347,101 +371,120 @@
       </div>
     {/if}
 
-    {#each $messages as msg, msgIdx (msg.ts + msg.role)}
-      {@const isLastMsg = msgIdx === $messages.length - 1}      <div class="msg msg-{msg.role}">
+    {#each $messages as msg (msg.ts + msg.role)}
+      <div class="msg msg-{msg.role}">
         {#if msg.role === 'assistant'}
           <div class="avatar">
             <span class="material-symbols-outlined" style="font-size:16px;color:var(--primary);font-variation-settings:'FILL' 1,'wght' 500;">auto_awesome</span>
           </div>
         {/if}
-        <div class="bubble" class:error-bubble={msg.isError}>
-          {#if msg.thinking}
-            <div class="thinking-block">
-              <button class="thinking-toggle" on:click={() => { msg.thinkingOpen = !msg.thinkingOpen; messages.update(m => m); }}>
-                <span class="material-symbols-outlined" style="font-size:14px;">{msg.thinkingOpen ? 'expand_less' : 'expand_more'}</span>
-                <span>思考过程</span>
-                {#if isLastMsg}
-                <button class="obs-open-btn" on:click|stopPropagation={obsStore.togglePanel} title="展开/收起过程明细">
-                  <span class="material-symbols-outlined" style="font-size:13px;color:var(--primary);">analytics</span>
-                </button>
-                {/if}
+        <div class="msg-stack">
+          {#if msg.role === 'assistant' && msg.thinking}
+            <div class="thought-panel">
+              <button class="thought-toggle" on:click={() => toggleMessageSection(msg, 'thinkingOpen')}>
+                <span class="material-symbols-outlined" style="font-size:13px;">{msg.thinkingOpen ? 'expand_less' : 'expand_more'}</span>
+                <span class="thought-title">思考过程</span>
               </button>
               {#if msg.thinkingOpen}
-                <div class="thinking-body">{msg.thinking}</div>
+                <div class="thought-body">{msg.thinking}</div>
               {/if}
             </div>
           {/if}
-          {#if msg.statusSteps?.length}
-            <div class="status-steps" class:no-border={!msg.content && !msg.docs?.length}>
-              {#each msg.statusSteps as step, i}
-                {@const isDone = i < msg.statusSteps.length - 1 || !!msg.content}
-                <div class="status-step">
-                  <span class="material-symbols-outlined step-icon" style="font-size:13px;font-variation-settings:'FILL' 1,'wght' 400;">{isDone ? 'check_circle' : 'pending'}</span>
-                  <span class="step-text">{step}</span>
-                </div>
-              {/each}
-            </div>
-          {/if}
-          {#if msg.content}
-            {#if msg.role === 'assistant'}
-              <div class="content markdown">{@html marked.parse(msg.content)}</div>
-            {:else}
-              <span class="content">{msg.content}</span>
-            {/if}
-          {/if}
-          {#if msg.docs?.length}
-            <div class="docs-list">
-              {#each msg.docs as doc}
-                <div class="doc-item">
-                  <span class="material-symbols-outlined" style="font-size:15px;color:var(--primary);font-variation-settings:'FILL' 1,'wght' 400;">description</span>
-                  <span class="doc-path">{doc.file_path}</span>
-                  <span class="doc-ver">v{doc.version}</span>
-                  <button class="copy-btn" on:click={() => copyPath(doc.file_path)}>复制路径</button>
-                </div>
-              {/each}
-            </div>
-          {/if}
-          {#if msg.role === 'assistant' && (msg.metaSkillName || msg.metaUsage)}
-            <div class="meta-bar">
-              <div class="meta-tags">
-                {#if msg.metaSkillName}
-                  <span class="skill-badge">
-                    <span class="material-symbols-outlined" style="font-size:12px;font-variation-settings:'FILL' 1,'wght' 500;">extension</span>
-                    {msg.metaSkillName}
-                  </span>
+
+          {#if hasBubbleContent(msg)}
+            <div class="bubble" class:error-bubble={msg.isError}>
+              {#if msg.content}
+                {#if msg.role === 'assistant'}
+                  <div class="content markdown">{@html marked.parse(msg.content)}</div>
+                {:else}
+                  <span class="content">{msg.content}</span>
                 {/if}
-                {#if msg.metaUsage}
-                  <span class="token-badge">
-                    <span class="material-symbols-outlined" style="font-size:12px;">bar_chart</span>
-                    {msg.metaUsage.total_tokens} tokens
-                  </span>
-                {/if}
-              </div>
-              {#if msg.metaSkillReason}
-                <span class="skill-reason">{msg.metaSkillReason}</span>
+              {/if}
+              {#if msg.docs?.length}
+                <div class="docs-list">
+                  {#each msg.docs as doc}
+                    <div class="doc-item">
+                      <span class="material-symbols-outlined" style="font-size:15px;color:var(--primary);font-variation-settings:'FILL' 1,'wght' 400;">description</span>
+                      <span class="doc-path">{doc.file_path}</span>
+                      <span class="doc-ver">v{doc.version}</span>
+                      <button class="copy-btn" on:click={() => copyPath(doc.file_path)}>复制路径</button>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+              {#if msg.role === 'assistant' && (msg.metaSkillName || msg.metaUsage)}
+                <div class="meta-bar">
+                  <div class="meta-tags">
+                    {#if msg.metaSkillName}
+                      <span class="skill-badge">
+                        <span class="material-symbols-outlined" style="font-size:12px;font-variation-settings:'FILL' 1,'wght' 500;">extension</span>
+                        {msg.metaSkillName}
+                      </span>
+                    {/if}
+                    {#if msg.metaUsage}
+                      <span class="token-badge">
+                        <span class="material-symbols-outlined" style="font-size:12px;">bar_chart</span>
+                        {msg.metaUsage.total_tokens} tokens
+                      </span>
+                    {/if}
+                  </div>
+                  {#if msg.metaSkillReason}
+                    <span class="skill-reason">{msg.metaSkillReason}</span>
+                  {/if}
+                </div>
+              {/if}
+              {#if msg.hasDraft && msg.role === 'assistant'}
+                {@const saveState = draftSaveState[msg.ts] || 'idle'}
+                {@const saveResult = draftSaveResult[msg.ts]}
+                <div class="draft-actions">
+                  {#if saveState === 'saved' && saveResult}
+                    <span class="draft-saved">
+                      <span class="material-symbols-outlined" style="font-size:14px;font-variation-settings:'FILL' 1,'wght' 500;">check_circle</span>
+                      已保存 v{saveResult.version}
+                    </span>
+                    <span class="draft-path">{saveResult.file_path}</span>
+                  {:else}
+                    <button
+                      class="btn-save-draft"
+                      class:saving={saveState === 'saving'}
+                      disabled={saveState === 'saving' || saveState === 'saved'}
+                      on:click={() => saveDraft(msg)}
+                    >
+                      <span class="material-symbols-outlined" style="font-size:14px;">save</span>
+                      {saveState === 'saving' ? '保存中...' : '保存为正式版本'}
+                    </button>
+                  {/if}
+                </div>
               {/if}
             </div>
           {/if}
-          {#if msg.hasDraft && msg.role === 'assistant'}
-            {@const saveState = draftSaveState[msg.ts] || 'idle'}
-            {@const saveResult = draftSaveResult[msg.ts]}
-            <div class="draft-actions">
-              {#if saveState === 'saved' && saveResult}
-                <span class="draft-saved">
-                  <span class="material-symbols-outlined" style="font-size:14px;font-variation-settings:'FILL' 1,'wght' 500;">check_circle</span>
-                  已保存 v{saveResult.version}
-                </span>
-                <span class="draft-path">{saveResult.file_path}</span>
-              {:else}
-                <button
-                  class="btn-save-draft"
-                  class:saving={saveState === 'saving'}
-                  disabled={saveState === 'saving' || saveState === 'saved'}
-                  on:click={() => saveDraft(msg)}
-                >
-                  <span class="material-symbols-outlined" style="font-size:14px;">save</span>
-                  {saveState === 'saving' ? '保存中...' : '保存为正式版本'}
-                </button>
+
+          {#if msg.role === 'assistant' && (msg.reflection || msg.summary)}
+            <div class="message-artifacts">
+              {#if msg.reflection}
+                <div class="artifact-panel">
+                  <button class="artifact-toggle" on:click={() => toggleMessageSection(msg, 'reflectionOpen')}>
+                    <span class="material-symbols-outlined" style="font-size:15px;">{msg.reflectionOpen ? 'expand_less' : 'expand_more'}</span>
+                    <span class="artifact-title">写作总结</span>
+                    <span class="artifact-meta">过程检查与结论</span>
+                  </button>
+                  {#if msg.reflectionOpen}
+                    <div class="artifact-body markdown">{@html marked.parse(msg.reflection)}</div>
+                  {/if}
+                </div>
+              {/if}
+
+              {#if msg.summary}
+                <div class="artifact-panel">
+                  <button class="artifact-toggle" on:click={() => toggleMessageSection(msg, 'summaryOpen')}>
+                    <span class="material-symbols-outlined" style="font-size:15px;">{msg.summaryOpen ? 'expand_less' : 'expand_more'}</span>
+                    <span class="artifact-title">写作摘要</span>
+                    <span class="artifact-meta">续写上下文压缩结果</span>
+                  </button>
+                  {#if msg.summaryOpen}
+                    <div class="artifact-body">{msg.summary}</div>
+                  {/if}
+                </div>
               {/if}
             </div>
           {/if}
@@ -544,6 +587,13 @@
 .msg { display: flex; align-items: flex-start; gap: 10px; }
 .msg-user { justify-content: flex-end; }
 .msg-assistant { justify-content: flex-start; }
+.msg-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  max-width: 72%;
+}
 
 .avatar {
   width: 30px;
@@ -558,12 +608,13 @@
 }
 
 .bubble {
-  max-width: 72%;
   padding: 12px 16px;
   border-radius: var(--radius-lg);
   line-height: 1.6;
   word-break: break-word;
 }
+.msg-user .msg-stack { align-items: flex-end; }
+.msg-assistant .msg-stack { align-items: stretch; }
 .msg-user .bubble {
   background: var(--primary);
   color: #fff;
@@ -604,64 +655,6 @@
 .content.markdown :global(th) { background: var(--high); font-weight: 600; }
 .content.markdown :global(strong) { font-weight: 600; }
 .content.markdown :global(em) { font-style: italic; }
-
-/* Thinking */
-.thinking-block {
-  margin-bottom: 10px;
-  background: var(--primary-surface);
-  border-radius: var(--radius);
-  overflow: hidden;
-  font-size: 12px;
-}
-.thinking-toggle {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 12px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  color: var(--primary);
-  font-size: 12px;
-  font-weight: 600;
-  text-align: left;
-}
-.thinking-toggle span:nth-child(2) { flex: 1; }
-.obs-open-btn {
-  background: none;
-  border: none;
-  padding: 2px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  border-radius: var(--radius-sm);
-  opacity: 0.7;
-}
-.obs-open-btn:hover { opacity: 1; background: rgba(99,102,241,0.1); }
-.thinking-toggle:hover { opacity: 0.8; }
-.thinking-body {
-  padding: 8px 12px 10px;
-  white-space: pre-line;
-  color: var(--text-muted);
-  font-style: italic;
-  line-height: 1.6;
-  max-height: 280px;
-  overflow-y: auto;
-}
-
-/* Status steps */
-.status-steps {
-  margin-bottom: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  border-bottom: 1.5px solid var(--dividers);
-  padding-bottom: 10px;
-}
-.status-steps.no-border { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
-.status-step { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
-.step-icon { color: var(--success); }
 
 /* Typing indicator */
 .typing {
@@ -742,6 +735,94 @@
   font-size: 12px;
 }
 .skill-reason { font-size: 11px; color: var(--text-muted); font-style: italic; line-height: 1.5; }
+
+/* Message artifacts */
+.message-artifacts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.thought-panel {
+  align-self: flex-start;
+  max-width: 58%;
+  background: var(--primary-surface);
+  border: 1px solid color-mix(in srgb, var(--primary) 18%, transparent);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.thought-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  color: var(--primary);
+}
+.thought-toggle:hover {
+  background: color-mix(in srgb, var(--primary) 6%, var(--primary-surface));
+}
+.thought-title {
+  font-size: 11px;
+  font-weight: 700;
+}
+.thought-body {
+  padding: 0 10px 10px;
+  white-space: pre-wrap;
+  line-height: 1.6;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.artifact-panel {
+  background: var(--high);
+  border: 1px solid var(--dividers);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.artifact-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+}
+.artifact-toggle:hover {
+  background: color-mix(in srgb, var(--primary) 4%, var(--high));
+}
+.artifact-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+.artifact-meta {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.artifact-body {
+  padding: 0 14px 14px;
+  white-space: pre-wrap;
+  line-height: 1.7;
+  color: var(--text-muted);
+  border-top: 1px solid var(--dividers);
+}
+.artifact-body.markdown :global(h1),
+.artifact-body.markdown :global(h2),
+.artifact-body.markdown :global(h3) {
+  font-family: var(--font-headline);
+  color: var(--text);
+}
+.artifact-body.markdown :global(p) { margin: 0.5em 0; }
+.artifact-body.markdown :global(ul),
+.artifact-body.markdown :global(ol) { padding-left: 1.25em; margin: 0.4em 0; }
+.artifact-body.markdown :global(li) { margin: 0.2em 0; }
 
 /* Draft actions */
 .draft-actions {

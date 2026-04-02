@@ -3,10 +3,6 @@ name: write-test-plan
 description: 根据需求规格和项目事实信息，编写系统或模块的测试方案文档。当用户提到编写测试方案、测试计划、测试用例、测试策略等时触发。
 type: test-plan
 version: 1.0.0
-tags:
-  - test
-  - qa
-  - test-plan
 capabilities:
   - 测试方案文档
   - 测试用例设计

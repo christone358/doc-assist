@@ -13,15 +13,54 @@ Sub-agent 使用独立 InMemorySessionService，ReAct 历史不写入主 Agent s
 import importlib.util
 import logging
 import os
+import re
 from typing import TYPE_CHECKING, List
 
-from google.adk.agents import LlmAgent
-from google.adk.agents.run_config import RunConfig, StreamingMode
-from google.adk.models.lite_llm import LiteLlm
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
-from google.adk.tools import ToolContext
-from google.genai import types
+try:
+    from google.adk.agents import LlmAgent
+    from google.adk.agents.run_config import RunConfig, StreamingMode
+    from google.adk.models.lite_llm import LiteLlm
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+    from google.adk.tools import ToolContext
+    from google.genai import types
+except ModuleNotFoundError:  # pragma: no cover - fallback for unit tests
+    class LlmAgent:  # type: ignore[override]
+        pass
+
+    class RunConfig:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class StreamingMode:  # type: ignore[override]
+        SSE = "SSE"
+
+    class LiteLlm:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class Runner:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class InMemorySessionService:  # type: ignore[override]
+        async def create_session(self, *args, **kwargs):
+            return None
+
+    class ToolContext:  # type: ignore[override]
+        pass
+
+    class _TypesFallback:  # pragma: no cover - simple namespace for tests
+        class Content:
+            def __init__(self, role=None, parts=None):
+                self.role = role
+                self.parts = parts or []
+
+        class Part:
+            def __init__(self, text=None):
+                self.text = text
+
+    types = _TypesFallback()
 
 if TYPE_CHECKING:
     from agent.adk.runner_adapter import ConversationContext
@@ -41,11 +80,23 @@ _SUBAGENT_EXECUTION_SPEC = """
 
 ### 可用通用工具
 
+- **resolve_target_module(target_ref)**：定位目标模块。
+  对于模块级写作任务，优先先调用它确认“写的是哪个模块”。
+  返回可能是：唯一模块、多个候选模块（歧义）或未找到。
+
+- **load_module_fact_sheet(target_ref)**：按模块聚合根加载模块事实主档。
+  在目标模块唯一明确后，优先调用它获取模块事实主文档正文，作为写作主上下文。
+  当前项目的模块事实主档已经覆盖模块级写作所需的描述、用例、功能点、API、页面、依赖等章节；拿到主档正文后，应直接基于该正文推理和写作。
+
 - **get_fact_overview(category)**：加载项目概览清单，用于定位写作对象。
-  category 可选：modules（模块清单）、usecases（用例清单）、classes（类包清单）、interfaces（接口清单）。
+  category 可选：systems、subsystems、modules、usecases、function_points、apis、classes、prototypes。
+  兼容别名：interfaces。
 
 - **get_fact_detail(target_id, fact_type)**：加载某目标的详细事实信息。
-  target_id 为目标标识符（如 mod-auth），fact_type 可选：usecases、classes、interfaces、prototypes。
+  对于模块型事实，target_id 可传稳定模块 ID，也可直接传模块名/别名，工具会自动解析；若同名模块有多个，工具会返回歧义提示。
+  fact_type 可选：
+  module、description、usecases、function_points、apis、classes、prototypes、dependencies、remarks。
+  兼容别名：interfaces。
 
 - **get_current_draft()**：读取当前对话已有的文档草稿（修改场景必须先调用）。
 
@@ -61,10 +112,15 @@ _SUBAGENT_EXECUTION_SPEC = """
 ### 写作约束
 
 1. 所有文档内容必须基于项目事实，不得虚构。
-2. 若无法从 user_intent 定位写作对象，调用 ask_user 澄清或终止写作。
+2. 若【上下文信息】或 `get_current_draft()` 已明确给出“当前文档目标”，且用户没有明确要求切换到别的模块/文档，则默认本轮是在继续修改该文档，不要把它当成新的模块定位任务。
 3. 先用事实工具完成最小检索闭环，再决定是否 ask_user：
-   - 先调用 get_fact_overview 定位目标模块、用例或对象标识；
-   - 若概览里出现目标模块或相近名称，继续调用 get_fact_detail，或追加调用其他概览工具补足事实；
+   - 若当前对话已有草稿且本轮是修改请求，应先调用 `get_current_draft()` 加载草稿，并沿用该草稿对应的模块/文档目标；
+   - 只有在没有可沿用的当前文档目标、且本轮确实是新的模块级写作任务时，才调用 `resolve_target_module` 定位目标模块；
+   - 若返回唯一模块，优先调用 `load_module_fact_sheet` 加载模块事实主档；
+   - 若返回多个候选模块或未找到，不要继续猜测，不要先加载某个候选模块详情，应立即调用 `ask_user` 请用户明确目标模块；
+   - 只有当用户要求列清单、看范围或目标对象本身不是模块时，才优先调用 `get_fact_overview`；
+   - 当前阶段不要再为同一模块重复调用 `get_fact_detail(description/usecases/function_points/apis/prototypes/dependencies/remarks)`；模块事实主档已是模块级完整事实正文；
+   - 仅当未来存在主档未覆盖的资源型事实入口，或用户明确要求额外专项资源时，才按需调用 `get_fact_detail`；
    - 只有在完成上述检索后，仍然无法确定写作对象，或用户明确要求的关键信息完全不存在时，才调用 ask_user。
 4. 若事实不足以支撑完整写作，优先基于已有事实继续生成，并把缺口写成“待确认”或“待补充”；
    不要因为缺少原型、截图、页面文案就立刻 ask_user。
@@ -72,14 +128,79 @@ _SUBAGENT_EXECUTION_SPEC = """
    - **有正式保存版本**（调用 list_saved_documents 能查到对应类型的文档）：
      修改意图默认以最新保存版本为基础，调用 load_saved_document 加载后再修改；
    - **只有未保存草稿**（list_saved_documents 无结果，但 get_current_draft 有内容）：
-     修改意图以上一轮对话草稿为基础，调用 get_current_draft 加载后再修改；
+     修改意图以上一轮对话草稿为基础，调用 get_current_draft 加载后再修改，并把该草稿的模块/文档目标视为本轮唯一写作对象；
    - **用户明确指定来源**（如"基于上次保存的 v1"、"用刚才写的草稿"）：按用户指定处理；
    - **均无草稿**：新建场景，无需询问。
-6. 对于模块型写作任务，如果从 get_fact_overview("modules") 已能定位出目标模块（例如返回了 `模块名(mod-xxx)`），不得重复调用同一个概览工具两次以上；应继续加载相关事实或直接写作。
-7. 写作完成后，最终响应须包含执行摘要：加载了哪些事实类型、基于哪个草稿版本（或新建）、生成文档字数。
+6. 写作完成后，最终响应只输出“本轮写作完成总结”，不得再次输出或改写文档正文。
+   最终响应建议包含：
+   - 事实来源说明
+   - 质量检查结论
+   - 建议（如有）
+   最终响应应简洁，聚焦执行过程与结果质量，不要重复正文内容。
+7. 若需要向用户补充确认信息，必须调用 ask_user(question)。
+   禁止在推理文本、过程说明、最终响应或正文中直接输出“请问…”、“为了准确编写…”、“我需要了解…”等提问内容。
+   所有面向用户的澄清问题都必须通过 ask_user 发出。
 
 所有输出使用中文。
 """
+
+
+def _extract_text_from_event(event) -> str:
+    if not event.content:
+        return ""
+    parts = []
+    for part in event.content.parts or []:
+        text = getattr(part, "text", None)
+        if text:
+            parts.append(text)
+    return "".join(parts)
+
+
+def _compute_stream_delta(previous_text: str, incoming_text: str) -> tuple[str, str]:
+    if not incoming_text:
+        return "", previous_text
+    if incoming_text.startswith(previous_text):
+        return incoming_text[len(previous_text):], incoming_text
+    if previous_text.endswith(incoming_text):
+        return "", previous_text
+    return incoming_text, previous_text + incoming_text
+
+
+def _normalize_reflection_text(text: str) -> str:
+    cleaned = (text or "").strip()
+    cleaned = re.sub(r"^\s*(?:#+\s*)?(?:执行摘要|完成总结)\s*\n+", "", cleaned)
+    return cleaned.strip()
+
+
+async def _generate_context_summary(
+    llm_config,
+    user_intent: str,
+    draft_content: str,
+    reflection_text: str,
+) -> str:
+    import litellm
+
+    prompt = (
+        "请根据以下文档写作结果，生成一段供上层 Agent 维持上下文的压缩摘要。\n"
+        "要求：\n"
+        "1. 使用中文；\n"
+        "2. 控制在 120-220 字；\n"
+        "3. 只保留后续继续修改文档最关键的信息：文档对象、类型、主要覆盖范围、明显待确认项；\n"
+        "4. 不要写客套话，不要重复过程细节，不要输出 Markdown 标题。\n\n"
+        f"用户任务：{user_intent}\n\n"
+        f"文档正文前 4000 字：\n{draft_content[:4000]}\n\n"
+        f"写作完成总结：\n{reflection_text[:2000]}"
+    )
+
+    response = await litellm.acompletion(
+        model=llm_config.model,
+        api_key=llm_config.api_key,
+        api_base=llm_config.api_base,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+        max_tokens=220,
+    )
+    return (response.choices[0].message.content or "").strip()
 
 
 # ── 辅助函数 ──────────────────────────────────────────────────────────────────
@@ -221,7 +342,7 @@ def _build_skill_subagent(
     instruction = skill_body + _SUBAGENT_EXECUTION_SPEC
 
     # 通用工具集（与主 Agent 共享同一 ctx）
-    get_fact_overview_fn, get_fact_detail_fn = create_fact_tools(ctx)
+    resolve_target_module_fn, load_module_fact_sheet_fn, get_fact_overview_fn, get_fact_detail_fn = create_fact_tools(ctx)
     list_saved_documents_fn, load_saved_document_fn = create_saved_doc_tools(ctx)
     skills_map = {skill.id: skill}
 
@@ -229,6 +350,8 @@ def _build_skill_subagent(
         create_get_current_draft_tool(ctx),
         list_saved_documents_fn,
         load_saved_document_fn,
+        resolve_target_module_fn,
+        load_module_fact_sheet_fn,
         get_fact_overview_fn,
         get_fact_detail_fn,
         create_write_document_tool(ctx, skills_map),
@@ -265,6 +388,25 @@ def _build_subagent_input(user_intent: str, ctx: "ConversationContext") -> str:
     parts = []
 
     context_hints = []
+    current_target_name = ctx.loaded_base_doc_name or ctx.current_module_name
+    current_target_id = ctx.loaded_base_module_id or ctx.current_module_id
+    current_target_scope = " / ".join(
+        item for item in [ctx.current_system_name, ctx.current_subsystem_name] if item
+    )
+
+    if ctx.conversation_has_draft:
+        context_hints.append(
+            "当前对话已有延续中的文档草稿；若本轮是修改请求，请先调用 get_current_draft 获取全文。"
+        )
+    if current_target_name or current_target_id:
+        target_label = current_target_name or "当前文档"
+        if current_target_scope:
+            target_label = f"{current_target_scope} / {target_label}"
+        if current_target_id:
+            target_label = f"{target_label} ({current_target_id})"
+        context_hints.append(
+            f"当前文档目标：{target_label}。若用户未明确要求切换对象，本轮继续修改时直接沿用该目标，不要重新做模块消歧。"
+        )
     if ctx.loaded_base_draft:
         char_count = len(ctx.loaded_base_draft)
         context_hints.append(
@@ -365,6 +507,8 @@ def create_execute_skill_tool(ctx: "ConversationContext", skills_map: dict):
 
         # Sub-agent 工具调用的前端显示文本
         _SUBAGENT_TOOL_DISPLAY = {
+            "resolve_target_module": "定位目标模块",
+            "load_module_fact_sheet": "加载模块事实主档",
             "get_fact_overview":    "加载项目概览",
             "get_fact_detail":      "加载事实详情",
             "get_current_draft":    "加载已有草稿",
@@ -382,7 +526,8 @@ def create_execute_skill_tool(ctx: "ConversationContext", skills_map: dict):
         })
 
         # 运行 Sub-agent，将执行步骤实时转发给前端（可观测面板）
-        final_text = ""
+        reflection_buffer = ""
+        reflection_started = False
         try:
             async for event in subagent_runner.run_async(
                 user_id=subagent_user_id,
@@ -414,18 +559,57 @@ def create_execute_skill_tool(ctx: "ConversationContext", skills_map: dict):
                         })
 
                 # Sub-agent 推理文字 → 转发为 thinking 事件
-                # 捕获每个 ReAct 步骤中 LLM 在决定调用工具之前生成的推理内容
-                # 注意：不捕获最终响应（摘要），只捕获中间推理过程
+                # write_document 完成前，这些内容代表普通 ReAct 推理。
+                # write_document 完成后，模型继续生成的是“写作完成总结”，
+                # 需要单独展示到右侧过程明细，而不是作为新的思考链。
                 if event.content and not event.is_final_response():
-                    for part in event.content.parts or []:
-                        if getattr(part, 'text', None) and part.text.strip():
-                            await ctx.ws_sender({"type": "thinking", "content": part.text})
+                    event_text = _extract_text_from_event(event)
+                    if not event_text.strip():
+                        continue
+                    if ctx.draft_updated:
+                        delta, reflection_buffer = _compute_stream_delta(
+                            reflection_buffer,
+                            event_text,
+                        )
+                        if delta.strip():
+                            if not reflection_started:
+                                reflection_started = True
+                                await ctx.ws_sender({
+                                    "type": "status",
+                                    "sub": "tool_call",
+                                    "tool": "write_reflection",
+                                    "content": "写作完成总结",
+                                })
+                            await ctx.ws_sender({
+                                "type": "reflection",
+                                "content": delta,
+                            })
+                    else:
+                        await ctx.ws_sender({"type": "thinking", "content": event_text})
 
-                # 捕获 Sub-agent 最终响应文本（执行摘要）
+                # 捕获 Sub-agent 最终响应文本（写作完成总结）
                 if event.is_final_response() and event.content:
-                    for part in event.content.parts or []:
-                        if part.text:
-                            final_text += part.text
+                    final_text = _extract_text_from_event(event)
+                    if ctx.draft_updated and final_text.strip():
+                        delta, reflection_buffer = _compute_stream_delta(
+                            reflection_buffer,
+                            final_text,
+                        )
+                        if delta.strip():
+                            if not reflection_started:
+                                reflection_started = True
+                                await ctx.ws_sender({
+                                    "type": "status",
+                                    "sub": "tool_call",
+                                    "tool": "write_reflection",
+                                    "content": "写作完成总结",
+                                })
+                            await ctx.ws_sender({
+                                "type": "reflection",
+                                "content": delta,
+                            })
+                    else:
+                        reflection_buffer = final_text
 
         except Exception as e:
             logger.error(
@@ -464,8 +648,37 @@ def create_execute_skill_tool(ctx: "ConversationContext", skills_map: dict):
         except Exception as e:
             logger.warning(f"execute_skill: 转移 session.state 失败: {e}")
 
-        # 将执行摘要写入 ctx，供后续轮次的 Sub-agent 参考
-        summary = final_text.strip() or f"Skill {skill_id} 执行完成"
+        reflection_text = _normalize_reflection_text(reflection_buffer)
+        if not reflection_text:
+            reflection_text = f"已完成 {skill.name} 写作。"
+
+        # 生成供主 Agent 续写时使用的压缩摘要，并在右侧过程明细中单独标识。
+        compact_summary = ""
+        try:
+            if llm_config is not None:
+                await ctx.ws_sender({
+                    "type": "status",
+                    "sub": "tool_call",
+                    "tool": "write_context_summary",
+                    "content": "写作摘要生成",
+                })
+                draft_content = tool_context.state.get("draft_content", "")
+                compact_summary = await _generate_context_summary(
+                    llm_config=llm_config,
+                    user_intent=user_intent,
+                    draft_content=draft_content,
+                    reflection_text=reflection_text,
+                )
+                if compact_summary:
+                    await ctx.ws_sender({
+                        "type": "summary",
+                        "content": compact_summary,
+                    })
+        except Exception as e:
+            logger.warning(f"execute_skill: 生成压缩摘要失败 skill_id={skill_id}: {e}")
+
+        # 将压缩摘要写入 ctx，供后续轮次的 Sub-agent / 主 Agent 参考
+        summary = compact_summary.strip() or reflection_text or f"Skill {skill_id} 执行完成"
         ctx.last_skill_execution_summary = summary
 
         logger.info(

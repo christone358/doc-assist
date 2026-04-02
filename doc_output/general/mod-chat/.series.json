@@ -1,0 +1,11 @@
+{
+  "doc_type": "general",
+  "doc_type_label": "通用文档",
+  "doc_name": "mod-chat",
+  "display_name": "mod-chat",
+  "aliases": [
+    "mod-chat",
+    "-chat"
+  ],
+  "updated_at": "2026-03-31T05:55:51.454933Z"
+}

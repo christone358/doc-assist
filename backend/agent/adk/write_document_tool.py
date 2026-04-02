@@ -10,6 +10,7 @@ write_document Tool - 调用 LLM 生成文档，流式输出到 WebSocket。
 """
 
 import logging
+import re
 from typing import TYPE_CHECKING, Dict
 
 from google.adk.tools import ToolContext
@@ -19,6 +20,47 @@ if TYPE_CHECKING:
     from agent.models import SkillInfo
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_skill_token(value: str) -> str:
+    text = (value or "").strip().lower()
+    text = text.replace("_", "-")
+    return re.sub(r"[^a-z0-9-]+", "-", text).strip("-")
+
+
+def _resolve_skill(skill_id: str, skills_map: Dict[str, "SkillInfo"]):
+    """Resolve the intended skill id from noisy model output.
+
+    Some models may accidentally pass the sub-agent name like
+    ``doc_worker_write_user_manual`` instead of the canonical skill id
+    ``write-user-manual``. In writing mode there is only one valid skill,
+    so we accept that fallback rather than surfacing an internal error
+    into the generated document stream.
+    """
+    if skill_id in skills_map:
+        return skill_id, skills_map[skill_id]
+
+    normalized = _normalize_skill_token(skill_id)
+    for candidate_id, candidate in skills_map.items():
+        if _normalize_skill_token(candidate_id) == normalized:
+            return candidate_id, candidate
+
+    if normalized.startswith("doc-worker-"):
+        normalized = normalized.removeprefix("doc-worker-")
+        for candidate_id, candidate in skills_map.items():
+            if _normalize_skill_token(candidate_id) == normalized:
+                return candidate_id, candidate
+
+    if len(skills_map) == 1:
+        only_id, only_skill = next(iter(skills_map.items()))
+        logger.warning(
+            "write_document: fallback to sole skill %s for unexpected skill_id=%r",
+            only_id,
+            skill_id,
+        )
+        return only_id, only_skill
+
+    return None, None
 
 
 def create_write_document_tool(ctx: "ConversationContext", skills_map: Dict[str, "SkillInfo"]):
@@ -34,12 +76,12 @@ def create_write_document_tool(ctx: "ConversationContext", skills_map: Dict[str,
         """调用 LLM 生成文档，流式输出文档内容。
 
         根据 skill_id 自动加载对应 Skill 的写作规范，结合用户意图生成完整文档。
-        已通过 get_fact_overview / get_fact_detail 收集的项目事实会自动注入；
+        已通过事实工具收集的项目事实会自动注入；
         修改场景请将现有草稿传入 context 参数；新建场景 context 传空字符串即可。
 
         Args:
             skill_id: 所选 Skill 的 id（如"write-requirements"），系统自动加载写作规范。
-            module_name: 当前写作的模块名称（来自 get_fact_overview 已知信息）；纯对话场景传空字符串。
+            module_name: 当前写作的模块名称；纯对话场景传空字符串。
             context: 修改场景传入已有草稿内容；新建场景或已通过 load_saved_document 加载历史版本时传空字符串。
             user_intent: 用户的写作意图描述。
 
@@ -51,17 +93,18 @@ def create_write_document_tool(ctx: "ConversationContext", skills_map: Dict[str,
 
         llm_config = get_litellm_model_config()
         if llm_config is None:
-            error_msg = "⚠️ 未配置 LLM 模型，无法生成文档。请在系统设置中添加模型配置。"
-            await ctx.ws_sender({"type": "text", "content": error_msg})
+            error_msg = "未配置 LLM 模型，无法生成文档。请在系统设置中添加模型配置。"
+            await ctx.ws_sender({"type": "error", "content": error_msg})
             return error_msg
 
         # 加载 Skill 写作规范（渐进式披露：仅在写作时从磁盘读取）
-        skill = skills_map.get(skill_id)
-        if skill is None:
-            error_msg = f"⚠️ 未找到 Skill '{skill_id}'，请确认 skill id 是否正确。"
-            await ctx.ws_sender({"type": "text", "content": error_msg})
+        resolved_skill_id, skill = _resolve_skill(skill_id, skills_map)
+        if skill is None or resolved_skill_id is None:
+            error_msg = f"未找到 Skill '{skill_id}'，请确认 skill id 是否正确。"
+            await ctx.ws_sender({"type": "error", "content": error_msg})
             return error_msg
 
+        skill_id = resolved_skill_id
         ctx.selected_skill_id = skill_id
         ctx.selected_skill_name = skill.name
 
@@ -107,7 +150,10 @@ def create_write_document_tool(ctx: "ConversationContext", skills_map: Dict[str,
             "## 写作原则\n"
             "- 所有输出使用中文，语言专业、清晰\n"
             "- 文档内容严格基于提供的上下文信息，不虚构细节\n"
-            "- 文档格式遵循 Markdown 规范，层次结构清晰\n"
+            "\n"
+            "## 输出边界\n"
+            "- 本次 write_document 只输出正式文档正文，不输出过程总结、事实来源说明、质量检查结论、建议、待确认项汇总或编写说明\n"
+            "- 写作完成后的执行总结与压缩摘要会由后续独立步骤生成，不要在正文中重复生成\n"
         )
         user_message = f"用户需求：{user_intent}\n\n## 上下文\n\n{final_context}"
 
@@ -160,9 +206,14 @@ def create_write_document_tool(ctx: "ConversationContext", skills_map: Dict[str,
         tool_context.state["selected_skill_id"] = skill_id
         tool_context.state["doc_type"] = skill.type
         # doc_name 优先用加载来源的 doc_name（保持版本连续性），否则用 LLM 传入的 module_name
-        effective_doc_name = ctx.loaded_base_doc_name or module_name
+        effective_doc_name = ctx.loaded_base_doc_name or module_name or ctx.current_module_name or ""
+        effective_module_id = ctx.loaded_base_module_id or ctx.current_module_id or ""
         if effective_doc_name:
             tool_context.state["module_name"] = effective_doc_name
+            ctx.current_module_name = effective_doc_name
+        if effective_module_id:
+            tool_context.state["module_id"] = effective_module_id
+            ctx.current_module_id = effective_module_id
 
         logger.info(
             f"write_document: 生成完成 skill_id={skill_id}, chars={len(full_text)}, usage={usage}"

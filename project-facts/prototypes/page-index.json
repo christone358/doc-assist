@@ -1,0 +1,204 @@
+{
+  "pages": [
+    {
+      "name": "ai__v1_0",
+      "path": "assets-system/ai__v1_0.html"
+    },
+    {
+      "name": "ai助手",
+      "path": "assets-system/ai助手.html"
+    },
+    {
+      "name": "Other",
+      "path": "assets-system/resources/Other.html"
+    },
+    {
+      "name": "chrome",
+      "path": "assets-system/resources/chrome/chrome.html"
+    },
+    {
+      "name": "firefox",
+      "path": "assets-system/resources/chrome/firefox.html"
+    },
+    {
+      "name": "safari",
+      "path": "assets-system/resources/chrome/safari.html"
+    },
+    {
+      "name": "images",
+      "path": "assets-system/resources/css/images/images.html"
+    },
+    {
+      "name": "reload",
+      "path": "assets-system/resources/reload.html"
+    },
+    {
+      "name": "start",
+      "path": "assets-system/start.html"
+    },
+    {
+      "name": "start_c_1",
+      "path": "assets-system/start_c_1.html"
+    },
+    {
+      "name": "start_with_pages",
+      "path": "assets-system/start_with_pages.html"
+    },
+    {
+      "name": "web漏洞管理",
+      "path": "assets-system/web漏洞管理.html"
+    },
+    {
+      "name": "web漏洞管理_v1_0",
+      "path": "assets-system/web漏洞管理_v1_0.html"
+    },
+    {
+      "name": "web漏洞详情",
+      "path": "assets-system/web漏洞详情.html"
+    },
+    {
+      "name": "web漏洞详情_v1_0",
+      "path": "assets-system/web漏洞详情_v1_0.html"
+    },
+    {
+      "name": "web漏洞详情_v2_0",
+      "path": "assets-system/web漏洞详情_v2_0.html"
+    },
+    {
+      "name": "业务板块配置",
+      "path": "assets-system/业务板块配置.html"
+    },
+    {
+      "name": "业务系统管理",
+      "path": "assets-system/业务系统管理.html"
+    },
+    {
+      "name": "业务系统详情",
+      "path": "assets-system/业务系统详情.html"
+    },
+    {
+      "name": "业务系统详情v1_0",
+      "path": "assets-system/业务系统详情v1_0.html"
+    },
+    {
+      "name": "业务资产概览---未",
+      "path": "assets-system/业务资产概览---未.html"
+    },
+    {
+      "name": "业务运维监控详情---未",
+      "path": "assets-system/业务运维监控详情---未.html"
+    },
+    {
+      "name": "主机漏洞管理",
+      "path": "assets-system/主机漏洞管理.html"
+    },
+    {
+      "name": "主机漏洞管理_v1_0",
+      "path": "assets-system/主机漏洞管理_v1_0.html"
+    },
+    {
+      "name": "主机漏洞详情",
+      "path": "assets-system/主机漏洞详情.html"
+    },
+    {
+      "name": "主机漏洞详情_v1_0",
+      "path": "assets-system/主机漏洞详情_v1_0.html"
+    },
+    {
+      "name": "主机漏洞详情_v2_0",
+      "path": "assets-system/主机漏洞详情_v2_0.html"
+    },
+    {
+      "name": "云主机管理",
+      "path": "assets-system/云主机管理.html"
+    },
+    {
+      "name": "云主机详情",
+      "path": "assets-system/云主机详情.html"
+    },
+    {
+      "name": "云服务对接配置",
+      "path": "assets-system/云服务对接配置.html"
+    },
+    {
+      "name": "云服务运维监控---未",
+      "path": "assets-system/云服务运维监控---未.html"
+    },
+    {
+      "name": "云服务运维监控---未_1",
+      "path": "assets-system/云服务运维监控---未_1.html"
+    },
+    {
+      "name": "云资产结构",
+      "path": "assets-system/云资产结构.html"
+    },
+    {
+      "name": "人员管理",
+      "path": "assets-system/人员管理.html"
+    },
+    {
+      "name": "任务执行记录",
+      "path": "assets-system/任务执行记录.html"
+    },
+    {
+      "name": "协同任务管理",
+      "path": "assets-system/协同任务管理.html"
+    },
+    {
+      "name": "告警监测---未",
+      "path": "assets-system/告警监测---未.html"
+    },
+    {
+      "name": "异常资产监测---未",
+      "path": "assets-system/异常资产监测---未.html"
+    },
+    {
+      "name": "数据上报配置",
+      "path": "assets-system/数据上报配置.html"
+    },
+    {
+      "name": "机房管理",
+      "path": "assets-system/机房管理.html"
+    },
+    {
+      "name": "终端资产管理",
+      "path": "assets-system/终端资产管理.html"
+    },
+    {
+      "name": "终端资产管理_v1_0",
+      "path": "assets-system/终端资产管理_v1_0.html"
+    },
+    {
+      "name": "终端资产详情",
+      "path": "assets-system/终端资产详情.html"
+    },
+    {
+      "name": "网段管理",
+      "path": "assets-system/网段管理.html"
+    },
+    {
+      "name": "脆弱性总览---未",
+      "path": "assets-system/脆弱性总览---未.html"
+    },
+    {
+      "name": "脆弱性检测",
+      "path": "assets-system/脆弱性检测.html"
+    },
+    {
+      "name": "设备资产管理",
+      "path": "assets-system/设备资产管理.html"
+    },
+    {
+      "name": "设备资产详情",
+      "path": "assets-system/设备资产详情.html"
+    },
+    {
+      "name": "设备运维监控---未",
+      "path": "assets-system/设备运维监控---未.html"
+    },
+    {
+      "name": "设备运维监控详情---未",
+      "path": "assets-system/设备运维监控详情---未.html"
+    }
+  ]
+}

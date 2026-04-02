@@ -5,10 +5,12 @@
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from doc_version_service import DocumentVersionService, VersionRef
+from agent.adk.saved_doc_tools import create_saved_doc_tools
 
 
 @pytest.fixture
@@ -99,26 +101,76 @@ def test_load_nonexistent_returns_none(svc):
     assert result is None
 
 
-def test_list_versions_reads_legacy_and_new_roots(svc, tmp_path):
-    """版本历史应兼容 legacy 根目录并与新目录合并展示"""
+def test_migrate_legacy_outputs_moves_documents_and_cleans_dirs(svc, tmp_path):
+    """legacy 正式输出应迁移到 doc_output，并清理非 conversations 目录"""
     legacy_root = tmp_path / "backend" / "docs"
     legacy_file = legacy_root / "requirements" / "LLM集成管理模块需求规格说明书" / "2026-01-01" / "v1.0.0.md"
     legacy_file.parent.mkdir(parents=True, exist_ok=True)
     legacy_file.write_text("legacy", encoding="utf-8")
-
-    asyncio.run(
-        svc.save_document(
-            "new",
-            doc_type="requirements",
-            doc_name="LLM集成管理模块",
-            force_date="2026-01-02",
-        )
+    legacy_file.with_suffix(".meta.json").write_text(
+        json.dumps(
+            {
+                "doc_type": "requirements",
+                "doc_name": "LLM集成管理模块需求规格说明书",
+                "version": "1.0.0",
+                "date": "2026-01-01",
+                "conversation_id": "conv-legacy",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
     )
+    (legacy_root / "conversations" / "conv-1").mkdir(parents=True, exist_ok=True)
+
+    summary = svc.migrate_legacy_outputs(cleanup=True)
+    migrated_file = tmp_path / "doc_output" / "requirements" / "LLM集成管理模块" / "2026-01-01" / "v1.0.0.md"
+
+    assert summary["migrated"] == 1
+    assert migrated_file.exists()
+    assert not (legacy_root / "requirements").exists()
+    assert (legacy_root / "conversations").exists()
 
     versions = asyncio.run(svc.list_versions(doc_type="requirements", doc_name="LLM集成模块需求规格说明书"))
-    assert len(versions) == 2
-    assert versions[0].version == "1.0.0"
-    assert versions[-1].date == "2026-01-02"
+    assert len(versions) == 1
+    assert versions[0].file_path == migrated_file
+
+
+def test_migrate_legacy_outputs_reversions_colliding_series(svc, tmp_path):
+    """碰到同一天同版本冲突时，迁移应保留内容并顺延补丁版本号"""
+    legacy_root = tmp_path / "backend" / "docs"
+    first = legacy_root / "requirements" / "LLM集成管理模块需求规格说明书" / "2026-01-01" / "v1.0.0.md"
+    second = legacy_root / "requirements" / "LLM 集成模块需求规格说明书" / "2026-01-01" / "v1.0.0.md"
+
+    for file_path, content, doc_name in [
+        (first, "内容A", "LLM集成管理模块需求规格说明书"),
+        (second, "内容B", "LLM 集成模块需求规格说明书"),
+    ]:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
+        file_path.with_suffix(".meta.json").write_text(
+            json.dumps(
+                {
+                    "doc_type": "requirements",
+                    "doc_name": doc_name,
+                    "version": "1.0.0",
+                    "date": "2026-01-01",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+    summary = svc.migrate_legacy_outputs(cleanup=False)
+    versions = asyncio.run(svc.list_versions("requirements", "LLM集成管理模块"))
+    contents = [
+        asyncio.run(svc.load_version("requirements", "LLM集成管理模块", "2026-01-01", v.version))[0]
+        for v in versions
+    ]
+
+    assert summary["migrated"] == 1
+    assert summary["reversioned"] == 1
+    assert [v.version for v in versions] == ["1.0.0", "1.0.1"]
+    assert sorted(contents) == ["内容A", "内容B"]
 
 
 def test_list_documents_returns_canonical_doc_type_labels(svc):
@@ -134,6 +186,25 @@ def test_list_documents_returns_canonical_doc_type_labels(svc):
     req_doc = next(d for d in docs if d["doc_type"] == "requirements")
     assert req_doc["doc_type_label"] == "需求规格"
     assert req_doc["doc_name"] == "模块A"
+    assert req_doc["path"].startswith("doc_output/")
+    assert "T" in req_doc["latest_updated_at"]
+
+
+def test_list_documents_supports_name_and_alias_query_across_types(svc):
+    """所有文档类型都应支持按文档名称和别名过滤"""
+    asyncio.run(svc.save_document("R", doc_type="requirements", doc_name="LLM集成管理模块需求规格说明书", force_date="2026-01-01"))
+    asyncio.run(svc.save_document("U", doc_type="user-manual", doc_name="技能管理模块用户手册", force_date="2026-01-01"))
+    asyncio.run(svc.save_document("D", doc_type="design", doc_name="支付模块设计方案", force_date="2026-01-01"))
+
+    requirement_docs = asyncio.run(svc.list_documents(doc_type="requirements", query="集成模块"))
+    manual_docs = asyncio.run(svc.list_documents(doc_type="user-manual", query="技能模块"))
+    design_docs = asyncio.run(svc.list_documents(doc_type="design", query="支付设计"))
+    missing_docs = asyncio.run(svc.list_documents(doc_type="design", query="不存在"))
+
+    assert [doc["doc_name"] for doc in requirement_docs] == ["LLM集成管理模块"]
+    assert [doc["doc_name"] for doc in manual_docs] == ["技能管理模块"]
+    assert [doc["doc_name"] for doc in design_docs] == ["支付模块"]
+    assert missing_docs == []
 
 
 def test_meta_file_created_with_aliases(svc):
@@ -167,3 +238,48 @@ def test_relative_path_prefers_project_relative(tmp_path):
         file_path=tmp_path / "doc_output" / "req" / "doc" / "2026-01-01" / "v1.0.0.md",
     )
     assert "req/doc/2026-01-01/v1.0.0.md" in ref.relative_path
+
+
+def test_saved_doc_tools_only_read_doc_output(monkeypatch, svc, tmp_path):
+    """历史文档工具不应再把 legacy 输出作为发现或加载来源"""
+    legacy_root = tmp_path / "backend" / "docs"
+    legacy_file = legacy_root / "requirements" / "LLM集成管理模块需求规格说明书" / "2026-01-01" / "v1.0.0.md"
+    legacy_file.parent.mkdir(parents=True, exist_ok=True)
+    legacy_file.write_text("legacy", encoding="utf-8")
+    legacy_file.with_suffix(".meta.json").write_text(
+        json.dumps(
+            {
+                "doc_type": "requirements",
+                "doc_name": "LLM集成管理模块需求规格说明书",
+                "version": "1.0.0",
+                "date": "2026-01-01",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    asyncio.run(svc.save_document("new", doc_type="requirements", doc_name="技能管理模块需求规格说明书", force_date="2026-01-02"))
+
+    async def ws_sender(_message):
+        return None
+
+    ctx = SimpleNamespace(
+        ws_sender=ws_sender,
+        loaded_base_draft=None,
+        loaded_base_doc_name=None,
+    )
+
+    monkeypatch.setattr("doc_version_service.get_doc_version_service", lambda: svc)
+    list_saved_documents, load_saved_document = create_saved_doc_tools(ctx)
+
+    listing = asyncio.run(list_saved_documents())
+    missing = asyncio.run(load_saved_document("requirements", "LLM集成管理模块"))
+    loaded = asyncio.run(load_saved_document("requirements", "技能管理模块"))
+
+    assert "技能管理模块" in listing
+    assert "LLM集成管理模块" not in listing
+    assert "未找到历史文档" in missing
+    assert "已加载 技能管理模块 v1.0.0" in loaded
+    assert ctx.loaded_base_draft == "new"
+    assert ctx.loaded_base_doc_name == "技能管理模块"

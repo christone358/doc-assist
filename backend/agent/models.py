@@ -65,21 +65,57 @@ class MessageInfo(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
-class SkillInfo(BaseModel):
-    """Information about a single skill."""
+class SkillResourceInfo(BaseModel):
+    """A visible resource inside a skill directory."""
+    category: str
+    path: str
+    name: str
+
+
+class SkillSummary(BaseModel):
+    """Public summary information for a single skill."""
     id: str
     name: str
     description: str
     type: str
     version: Optional[str] = None
-    tags: List[str] = []
-    capabilities: List[str] = []
-    skill_md_path: Optional[str] = None  # Absolute path to skill.md, for lazy content loading
+    capabilities: List[str] = Field(default_factory=list)
+
+
+class SkillDetail(SkillSummary):
+    """Public detail information for a single skill."""
+    resources: List[SkillResourceInfo] = Field(default_factory=list)
+
+
+class SkillInfo(SkillDetail):
+    """Internal skill model used by agent runtime."""
+    skill_md_path: Optional[str] = Field(default=None, exclude=True)
+
+    def to_summary(self) -> SkillSummary:
+        return SkillSummary(
+            id=self.id,
+            name=self.name,
+            description=self.description,
+            type=self.type,
+            version=self.version,
+            capabilities=list(self.capabilities),
+        )
+
+    def to_detail(self) -> SkillDetail:
+        return SkillDetail(
+            id=self.id,
+            name=self.name,
+            description=self.description,
+            type=self.type,
+            version=self.version,
+            capabilities=list(self.capabilities),
+            resources=list(self.resources),
+        )
 
 
 class SkillListResponse(BaseModel):
     """Response for skill listing."""
-    skills: List[SkillInfo]
+    skills: List[SkillSummary]
     total: int = 0
 
     def __init__(self, **data):

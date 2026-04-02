@@ -12,6 +12,9 @@ from datetime import datetime
 from dataclasses import asdict
 import asyncio
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_FACTS_ROOT = REPO_ROOT / "project-facts"
+
 from models import (
     FactInformation,
     FactMetadata,
@@ -29,13 +32,13 @@ from models import (
 class FactInformationStorage:
     """Manages storage of project fact information."""
 
-    def __init__(self, base_path: str = "project-facts"):
+    def __init__(self, base_path: str | Path = DEFAULT_FACTS_ROOT):
         """Initialize the storage manager.
 
         Args:
             base_path: Base directory for project fact information
         """
-        self.base_path = Path(base_path)
+        self.base_path = Path(base_path).resolve()
         self._ensure_directories_exist()
         self._index: Dict[str, FactInformation] = {}
         self._load_index()
@@ -109,7 +112,7 @@ class FactInformationStorage:
             for category in FactCategory:
                 file_path = self._get_file_path(layer, category, fact_id)
                 if file_path.exists():
-                    return await self._load_from_file(file_path)
+                    return self._load_from_file(file_path)
 
         return None
 
@@ -161,9 +164,9 @@ class FactInformationStorage:
                 for category_dir in layer_dir.iterdir():
                     if category_dir.is_dir():
                         for json_file in category_dir.glob("*.json"):
-                            asyncio.run(self._load_from_file(json_file))
+                            self._load_from_file(json_file)
 
-    async def _load_from_file(self, file_path: Path) -> Optional[FactInformation]:
+    def _load_from_file(self, file_path: Path) -> Optional[FactInformation]:
         """Load a single fact information item from file."""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -340,7 +343,7 @@ async def get_fact_service() -> FactInformationService:
     global _service, _storage
 
     if _service is None:
-        _storage = FactInformationStorage(base_path="project-facts")
+        _storage = FactInformationStorage(base_path=DEFAULT_FACTS_ROOT)
         _service = FactInformationService(_storage)
 
     return _service

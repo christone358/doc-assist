@@ -19,12 +19,20 @@
         } else {
           result.push({ kind: 'thinking', event: e });
         }
+      } else if (e.type === 'reflection') {
+        currentTool = null;
+        result.push({ kind: 'reflection', event: e });
+      } else if (e.type === 'summary') {
+        currentTool = null;
+        result.push({ kind: 'summary', event: e });
       } else if (e.type === 'status' && e.extra?.sub === 'tool_call') {
         currentTool = { kind: 'tool_call', event: e, children: [] };
         result.push(currentTool);
       } else if (e.type === 'status' && e.extra?.sub === 'detail') {
         if (currentTool) {
           currentTool.children.push({ kind: 'detail', event: e });
+        } else {
+          result.push({ kind: 'tool_result', event: e });
         }
       } else if (e.type === 'status') {
         // Generic status (e.g. draft loaded) — top-level, resets tool context
@@ -46,7 +54,10 @@
 
   const KIND_COLOR = {
     thinking:       'var(--primary)',
+    reflection:     '#f59e0b',
+    summary:        '#0ea5e9',
     tool_call:      '#8b5cf6',
+    tool_result:    '#0f766e',
     status:         'var(--text-muted)',
     question:       'var(--warning)',
     skill:          '#8b5cf6',
@@ -55,7 +66,10 @@
   };
   const KIND_ICON = {
     thinking:       'lightbulb',
+    reflection:     'rate_review',
+    summary:        'summarize',
     tool_call:      'settings',
+    tool_result:    'rule',
     status:         'check_circle',
     question:       'help',
     skill:          'extension',
@@ -64,13 +78,22 @@
   };
   const KIND_LABEL = {
     thinking:       '思考',
+    reflection:     '写作总结',
+    summary:        '写作摘要',
     tool_call:      '工具调用',
+    tool_result:    '工具结果',
     status:         '状态',
     question:       '提问',
     skill:          '技能调用',
     subagent_start: '子 Agent',
     done:           '完成',
   };
+
+  function detailTone(outcome) {
+    if (outcome === 'error') return { icon: 'error', color: 'var(--danger, #dc2626)' };
+    if (outcome === 'empty') return { icon: 'info', color: 'var(--warning)' };
+    return { icon: 'check_circle', color: 'var(--success)' };
+  }
 
   function formatTokens(usage) {
     if (!usage) return null;
@@ -134,6 +157,16 @@
                 <div class="thinking-text">{item.event.content}</div>
               </div>
 
+            {:else if item.kind === 'reflection'}
+              <div class="card reflection-card">
+                <div class="thinking-text">{item.event.content}</div>
+              </div>
+
+            {:else if item.kind === 'summary'}
+              <div class="card summary-card">
+                <div class="thinking-text">{item.event.content}</div>
+              </div>
+
             {:else if item.kind === 'tool_call'}
               <div class="card tool-card">{item.event.content}</div>
               <!-- Nested children: detail results + inner thinking -->
@@ -141,9 +174,10 @@
                 <div class="children">
                   {#each item.children as child}
                     {#if child.kind === 'detail'}
+                      {@const tone = detailTone(child.event.extra?.outcome)}
                       <div class="child-detail">
                         <span class="child-arrow">↳</span>
-                        <span class="material-symbols-outlined" style="font-size:11px;color:var(--primary);opacity:0.6;font-variation-settings:'FILL' 1,'wght' 400;">database</span>
+                        <span class="material-symbols-outlined" style="font-size:11px;color:{tone.color};opacity:0.8;font-variation-settings:'FILL' 1,'wght' 400;">{tone.icon}</span>
                         <span class="child-text">{child.event.content}</span>
                       </div>
                     {:else if child.kind === 'inner_thinking'}
@@ -161,6 +195,13 @@
               <div class="card status-card">
                 <span class="material-symbols-outlined" style="font-size:12px;color:var(--success);font-variation-settings:'FILL' 1,'wght' 400;">check_circle</span>
                 {item.event.content}
+              </div>
+
+            {:else if item.kind === 'tool_result'}
+              {@const tone = detailTone(item.event.extra?.outcome)}
+              <div class="card tool-result-card">
+                <span class="material-symbols-outlined" style="font-size:12px;color:{tone.color};font-variation-settings:'FILL' 1,'wght' 400;">{tone.icon}</span>
+                <span>{item.event.content}</span>
               </div>
 
             {:else if item.kind === 'question'}
@@ -321,6 +362,7 @@
 .thinking-text { max-height: 200px; overflow-y: auto; padding: 9px 12px; white-space: pre-line; line-height: 1.5; }
 .tool-card { font-weight: 500; }
 .status-card { display: flex; align-items: flex-start; gap: 6px; color: var(--text-muted); }
+.tool-result-card { display: flex; align-items: flex-start; gap: 6px; }
 .question-card { display: flex; align-items: flex-start; gap: 8px; background: rgba(245,158,11,0.08); border-left: 3px solid var(--warning); }
 .skill-card { display: flex; flex-direction: column; gap: 3px; }
 .skill-name { font-weight: 600; color: #8b5cf6; }

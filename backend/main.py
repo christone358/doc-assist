@@ -23,6 +23,7 @@ from agent.models import (
     ChatResponse,
     ConversationCreate,
     DocumentOutputInfo,
+    SkillDetail,
     SkillListResponse,
     HealthResponse,
     WritingState,
@@ -31,12 +32,17 @@ from llm.service import LLMService
 from fact_info_service import get_fact_service
 from llm.routes import router as llm_router
 from doc_version_service import get_doc_version_service
+from project_fact_modules import ModuleArchiveRepository, ensure_generated_views
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+FACTS_ROOT = REPO_ROOT / "project-facts"
 
 
 def _extract_doc_content(text: str) -> str:
     """Extract clean document content from LLM response.
 
     Strips any preamble explanation before the first H1 heading,
+    removes known process-summary appendix sections,
     and removes trailing <!-- doc_type: ... --> metadata comments.
     Falls back to the full text if no H1 is found.
     """
@@ -44,6 +50,12 @@ def _extract_doc_content(text: str) -> str:
     for i, line in enumerate(lines):
         if line.startswith('# ') or line == '#':
             doc = '\n'.join(lines[i:]).strip()
+            appendix_heading = re.search(
+                r'(?m)^(##+\s*(?:事实来源说明(?:与质量检查)?|事实来源说明|事实来源|质量检查结论|手册编写说明与待确认项|主要待确认项)\s*)$',
+                doc,
+            )
+            if appendix_heading:
+                doc = doc[:appendix_heading.start()].rstrip()
             # Strip trailing doc_type comment — not needed in stored draft
             doc = re.sub(r'\s*<!--\s*doc_type:\s*[\w-]+\s*-->\s*$', '', doc).strip()
             return doc
@@ -304,10 +316,10 @@ async def list_skills(
 ):
     """Get list of available skills."""
     skills = await agent.get_available_skills()
-    return SkillListResponse(skills=skills)
+    return SkillListResponse(skills=[skill.to_summary() for skill in skills])
 
 
-@app.get("/api/v1/skills/{skill_id}", tags=["Skills"])
+@app.get("/api/v1/skills/{skill_id}", response_model=SkillDetail, tags=["Skills"])
 async def get_skill(
     skill_id: str,
     agent: AgentCore = Depends(get_agent),
@@ -316,7 +328,7 @@ async def get_skill(
     skill = await agent.get_skill(skill_id)
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
-    return skill
+    return skill.to_detail()
 
 
 # =============================================================================
@@ -328,8 +340,21 @@ async def get_fact_info(
     layer: Optional[str] = None,
     category: Optional[str] = None,
     keyword: Optional[str] = None,
+    system: Optional[str] = None,
+    subsystem: Optional[str] = None,
+    status: Optional[str] = None,
 ):
     """Query project fact information."""
+    repo = ModuleArchiveRepository(FACTS_ROOT)
+    module_items = repo.list_modules(
+        keyword=keyword or "",
+        system=system or "",
+        subsystem=subsystem or "",
+        status=status or "",
+    )
+    if module_items:
+        return {"items": module_items}
+
     service = await get_fact_service()
 
     if keyword:
@@ -348,9 +373,26 @@ async def get_fact_info(
     return {"items": [{"id": i.metadata.id, "name": i.metadata.name, "layer": i.metadata.layer} for i in items]}
 
 
+@app.post("/api/v1/fact-info/refresh", tags=["Project Facts"])
+async def refresh_fact_info():
+    """Rebuild derived project fact views from the latest module archives."""
+    generated = ensure_generated_views(FACTS_ROOT)
+    archives = generated.get("archives", [])
+    return {
+        "message": "项目事实信息已更新",
+        "modules": len(archives),
+        "generated_views": len(archives),
+    }
+
+
 @app.get("/api/v1/fact-info/{fact_id}", tags=["Project Facts"])
 async def get_fact_by_id(fact_id: str):
     """Get a specific fact information item by ID."""
+    repo = ModuleArchiveRepository(FACTS_ROOT)
+    module = repo.get_module(fact_id)
+    if module:
+        return module
+
     service = await get_fact_service()
     item = await service.get_by_id(fact_id)
     if not item:
@@ -368,10 +410,14 @@ async def get_fact_by_id(fact_id: str):
 # =============================================================================
 
 @app.get("/api/v1/documents", tags=["Documents"])
-async def list_documents(doc_type: Optional[str] = None):
-    """List all documents, optionally filtered by type."""
+async def list_documents(
+    doc_type: Optional[str] = None,
+    query: Optional[str] = None,
+    module_query: Optional[str] = None,
+):
+    """List all documents, optionally filtered by type and document name query."""
     svc = get_doc_version_service()
-    docs = await svc.list_documents(doc_type=doc_type)
+    docs = await svc.list_documents(doc_type=doc_type, query=query or module_query)
     return {"documents": docs}
 
 
@@ -382,7 +428,12 @@ async def list_versions(doc_type: str, doc_name: str):
     versions = await svc.list_versions(doc_type=doc_type, doc_name=doc_name)
     return {
         "versions": [
-            {"date": v.date, "version": v.version, "path": v.relative_path}
+            {
+                "date": v.date,
+                "version": v.version,
+                "path": v.relative_path,
+                "updated_at": svc.ref_updated_at(v),
+            }
             for v in versions
         ]
     }
@@ -396,7 +447,12 @@ async def get_latest_document(doc_type: str, doc_name: str):
     if result is None:
         raise HTTPException(status_code=404, detail="Document not found")
     content, ref = result
-    return {"path": ref.relative_path, "version": ref.version, "content": content}
+    return {
+        "path": ref.relative_path,
+        "version": ref.version,
+        "updated_at": svc.ref_updated_at(ref),
+        "content": content,
+    }
 
 
 @app.get("/api/v1/documents/{doc_type}/{doc_name}/{date}/{version}", tags=["Documents"])
@@ -407,7 +463,12 @@ async def get_document_version(doc_type: str, doc_name: str, date: str, version:
     if result is None:
         raise HTTPException(status_code=404, detail="Version not found")
     content, ref = result
-    return {"path": ref.relative_path, "version": ref.version, "content": content}
+    return {
+        "path": ref.relative_path,
+        "version": ref.version,
+        "updated_at": svc.ref_updated_at(ref),
+        "content": content,
+    }
 
 
 # =============================================================================
@@ -463,7 +524,16 @@ async def _run_agent_stream(
         skill_manager=skill_manager,
     ):
         chunk_type = chunk.get("type")
-        if chunk_type in ("text", "status", "error", "question", "thinking", "skill_start"):
+        if chunk_type in (
+            "text",
+            "status",
+            "error",
+            "question",
+            "thinking",
+            "skill_start",
+            "reflection",
+            "summary",
+        ):
             await ws_manager_ref.send_message(conversation_id, chunk)
             if chunk_type == "text":
                 text_response += chunk.get("content", "")
@@ -614,6 +684,10 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
 async def startup_event():
     """Initialize services on startup."""
     logger.info("Starting NextAgent Doc Assistant...")
+
+    svc = get_doc_version_service()
+    migration = svc.migrate_legacy_outputs(cleanup=True)
+    logger.info("Legacy document migration summary: %s", migration)
 
     # Initialize Agent (loads skills)
     agent = AgentCore.get_instance()

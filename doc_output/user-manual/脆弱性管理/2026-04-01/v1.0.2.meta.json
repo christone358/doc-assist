@@ -1,0 +1,17 @@
+{
+  "doc_type": "user-manual",
+  "doc_type_label": "用户手册",
+  "doc_name": "脆弱性管理",
+  "requested_name": "脆弱性管理",
+  "version": "1.0.2",
+  "date": "2026-04-01",
+  "created_at": "2026-04-01T14:43:22.045233Z",
+  "conversation_id": "9ad7c261-d516-4e6e-a282-0800d3872103",
+  "round_id": null,
+  "change_summary": null,
+  "previous_version": "1.0.1",
+  "skill_id": null,
+  "aliases": [
+    "脆弱性管理"
+  ]
+}

@@ -22,7 +22,8 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-CONVERSATIONS_DIR = Path("docs/conversations")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CONVERSATIONS_DIR = PROJECT_ROOT / "backend" / "docs" / "conversations"
 
 def _now() -> datetime:
     """Return current UTC time (timezone-aware)."""

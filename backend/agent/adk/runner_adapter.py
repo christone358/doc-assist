@@ -18,10 +18,44 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
-from google.adk.agents.run_config import RunConfig, StreamingMode
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
-from google.genai import types
+try:
+    from google.adk.agents.run_config import RunConfig, StreamingMode
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+    from google.genai import types
+except ModuleNotFoundError:  # pragma: no cover - fallback for unit tests
+    class RunConfig:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class StreamingMode:  # type: ignore[override]
+        SSE = "SSE"
+
+    class Runner:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class InMemorySessionService:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            self.sessions = {}
+
+        async def create_session(self, *args, **kwargs):
+            return None
+
+        async def get_session(self, *args, **kwargs):
+            return None
+
+    class _TypesFallback:  # pragma: no cover - simple namespace for tests
+        class Content:
+            def __init__(self, role=None, parts=None):
+                self.role = role
+                self.parts = parts or []
+
+        class Part:
+            def __init__(self, text=None):
+                self.text = text
+
+    types = _TypesFallback()
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +106,56 @@ def _format_stream_error(error: Exception) -> str:
         return f"模型服务连接失败：{raw}"
 
     return f"处理出错：{raw}"
+
+
+def _extract_text_from_content(content: Any) -> str:
+    """Flatten ADK content parts into plain text."""
+    if not content:
+        return ""
+    chunks: List[str] = []
+    for part in content.parts or []:
+        text = getattr(part, "text", None)
+        if text:
+            chunks.append(text)
+    return "".join(chunks)
+
+
+def _compute_stream_delta(previous_text: str, incoming_text: str) -> tuple[str, str]:
+    """Normalize streaming payloads that may be cumulative or delta-based.
+
+    Some providers stream "full text so far", while others stream only the latest
+    delta. This helper returns the newly appended delta and the updated buffer.
+    """
+    if not incoming_text:
+        return "", previous_text
+
+    if incoming_text.startswith(previous_text):
+        return incoming_text[len(previous_text):], incoming_text
+
+    if previous_text.endswith(incoming_text):
+        return "", previous_text
+
+    return incoming_text, previous_text + incoming_text
+
+
+def _looks_like_writing_request(message: str) -> bool:
+    """Best-effort heuristic for requests that should delegate to writing flow.
+
+    In writing scenarios, the main agent often emits planning prose before it
+    actually calls ``execute_skill``. That prose belongs to the thinking panel,
+    not the formal document/output bubble.
+    """
+    text = (message or "").strip().lower()
+    if not text:
+        return False
+
+    writing_keywords = (
+        "写", "编写", "撰写", "修订", "修改", "润色",
+        "文档", "手册", "说明书", "操作指南", "用户指南",
+        "需求", "设计", "方案", "接口文档", "技术文档",
+        "manual", "document", "doc",
+    )
+    return any(keyword in text for keyword in writing_keywords)
 
 
 def _prune_session_events(entry: SessionEntry, keep_rounds: int) -> None:
@@ -198,6 +282,18 @@ class ConversationContext:
     # write_document 保存时优先用此 doc_name，确保修改后继续追加版本而非创建新文档目录。
     loaded_base_doc_name: Optional[str] = None
 
+    # 当前草稿对应的稳定模块标识（per-round）：从事实工具解析或 get_current_draft 恢复。
+    # write_document 保存时会将其写回 session.state，供后续轮次继续沿用。
+    loaded_base_module_id: Optional[str] = None
+
+    # 当前对话已知的写作目标（per-round）：用于修改场景下跨轮延续上下文，
+    # 避免用户仅说“删掉这一章”时再次触发模块消歧。
+    current_module_id: Optional[str] = None
+    current_module_name: Optional[str] = None
+    current_system_name: Optional[str] = None
+    current_subsystem_name: Optional[str] = None
+    conversation_has_draft: bool = False
+
     # 上次 Skill 执行摘要（跨轮传递）：execute_skill 写入，供后续轮次 Sub-agent 注入上下文。
     # stream_message 在每轮创建新 ctx 后，从上一轮 ctx 拷贝此字段实现跨轮传递。
     last_skill_execution_summary: Optional[str] = None
@@ -271,8 +367,12 @@ async def stream_message(
         conversation_id=conversation_id,
         ws_sender=ws_sender,
         conversation_manager=conversation_manager,
+        conversation_has_draft=has_draft,
         last_skill_execution_summary=entry.last_skill_execution_summary,
     )
+    if conv and conv.writing_state:
+        ctx.current_module_id = conv.writing_state.module_id or None
+        ctx.current_module_name = conv.writing_state.module_name or None
     _active_contexts[conversation_id] = ctx
 
     try:
@@ -283,6 +383,10 @@ async def stream_message(
             session_service=entry.session_service,
             app_name="doc_assist",
         )
+        streamed_text_buffer = ""
+        streamed_thinking_buffer = ""
+        saw_tool_activity = False
+        prefer_thinking_stream = _looks_like_writing_request(message)
 
         # ── 三层压缩策略（第二、三层）─────────────────────────────────────
         # 第二层：超过 COMPRESSION_ROUND_THRESHOLD 轮时裁剪早期事件
@@ -301,6 +405,8 @@ async def stream_message(
 
         # 运行 Agent，映射事件到 WebSocket 消息
         _TOOL_DISPLAY = {
+            "resolve_target_module": "定位目标模块",
+            "load_module_fact_sheet": "加载模块事实主档",
             "get_fact_overview": "查询项目概览",
             "get_fact_detail":   "查询详细信息",
             "execute_skill":     "执行写作 Skill",
@@ -316,6 +422,7 @@ async def stream_message(
             # --- 工具调用 → status (tool_call) ---
             func_calls = event.get_function_calls()
             if func_calls:
+                saw_tool_activity = True
                 for fc in func_calls:
                     tool_name = fc.name
                     if tool_name == "execute_skill":
@@ -335,11 +442,31 @@ async def stream_message(
                             "content": _TOOL_DISPLAY.get(tool_name, f"调用：{tool_name}"),
                         }
 
-            # --- 流式推理文本 → thinking ---
+            # --- 主 Agent 流式文本 → text ---
+            # 仅在“普通对话/查询”场景下，将 partial 内容实时输出到左侧消息区。
+            # 一旦本轮已经进入写作流程（ctx.draft_updated=True），
+            # 后续主 Agent 的收尾总结/压缩摘要不应再混入正文气泡，
+            # 因此这里直接忽略主 Agent 的 partial 文本。
+            # 对于明确写作场景，主 Agent 的流式段落优先进入 thinking。
+            # 普通查询即便用到了事实工具，最终回答仍应走左侧正式正文气泡，
+            # 否则会把真正的查询结论错误地吞进思考面板。
             if event.partial and event.content:
-                for part in event.content.parts or []:
-                    if part.text and part.text.strip():
-                        yield {"type": "thinking", "content": part.text}
+                if not ctx.draft_updated:
+                    partial_text = _extract_text_from_content(event.content)
+                    if prefer_thinking_stream:
+                        delta, streamed_thinking_buffer = _compute_stream_delta(
+                            streamed_thinking_buffer,
+                            partial_text,
+                        )
+                        if delta.strip():
+                            yield {"type": "thinking", "content": delta}
+                    else:
+                        delta, streamed_text_buffer = _compute_stream_delta(
+                            streamed_text_buffer,
+                            partial_text,
+                        )
+                        if delta.strip():
+                            yield {"type": "text", "content": delta}
 
             # --- 错误事件 → error ---
             if event.error_code or event.error_message:
@@ -352,9 +479,21 @@ async def stream_message(
             if event.is_final_response():
                 # 提取最终响应文本（纯对话回复场景，无 Skill 写作）
                 if not ctx.draft_updated and event.content:
-                    for part in event.content.parts or []:
-                        if part.text and part.text.strip():
-                            yield {"type": "text", "content": part.text}
+                    final_text = _extract_text_from_content(event.content)
+                    if ctx.selected_skill_id or prefer_thinking_stream:
+                        delta, streamed_thinking_buffer = _compute_stream_delta(
+                            streamed_thinking_buffer,
+                            final_text,
+                        )
+                        if delta.strip():
+                            yield {"type": "thinking", "content": delta}
+                    else:
+                        delta, streamed_text_buffer = _compute_stream_delta(
+                            streamed_text_buffer,
+                            final_text,
+                        )
+                        if delta.strip():
+                            yield {"type": "text", "content": delta}
 
                 # 从 session.state 读取写作产物（由 write_document 工具写入）
                 session = await entry.session_service.get_session(
@@ -364,6 +503,7 @@ async def stream_message(
                 )
                 state_draft = session.state.get("draft_content") if session else None
                 state_skill_id = session.state.get("selected_skill_id") if session else None
+                state_module_id = session.state.get("module_id", "") if session else ""
                 state_module_name = session.state.get("module_name", "") if session else ""
                 state_doc_type = session.state.get("doc_type", "") if session else ""
 
@@ -390,7 +530,7 @@ async def stream_message(
                     "draft_content": state_draft,    # 从 session.state 读取，供 main.py 持久化
                     "writing_state_data": (
                         {
-                            "module_id": "",
+                            "module_id": state_module_id,
                             "module_name": state_module_name,
                             "skill_id": final_skill_id or "",
                             "doc_type": state_doc_type,

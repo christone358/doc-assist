@@ -108,12 +108,16 @@ class AgentCore:
 
     async def get_available_skills(self) -> List[SkillInfo]:
         """返回所有已加载的 Skill。"""
+        if not self._initialized:
+            await self.initialize()
         if not self._skill_manager:
             return []
         return await self._skill_manager.get_all_skills()
 
     async def get_skill(self, skill_id: str) -> Optional[SkillInfo]:
         """按 ID 获取单个 Skill。"""
+        if not self._initialized:
+            await self.initialize()
         if not self._skill_manager:
             return None
         return await self._skill_manager.get_skill(skill_id)

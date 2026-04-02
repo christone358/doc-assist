@@ -10,14 +10,13 @@
 skills/
 ├── [skill-name]/                    # Skill 标识符（kebab-case）
 │   ├── skill.md                     # Skill 元信息和说明文档
-│   ├── scripts/                     # Skill 实现脚本
+│   ├── scripts/                     # Skill 实现脚本（可选）
 │   │   └── main.py                  # 主实现文件
 │   │   ├── helper.py                # 辅助模块（可选）
 │   │   └── config.json              # 配置文件（可选）
-│   └── reference/                   # 参考资源（可选）
-│       ├── template.md              # 文档模板
-│       ├── examples/                # 示例文件
-│       └── guidelines.md            # 编写指南
+│   ├── templates/                   # 模板资源（可选）
+│   ├── reference/                   # 参考资源（可选，兼容旧命名）
+│   └── references/                  # 参考资源（可选，推荐命名）
 └── [other-skill]/
     └── ...
 ```
@@ -32,15 +31,11 @@ skills/
 # 必需字段
 Skill Name: 文档编写 - 需求规格
 Description: 用于编写软件工程项目的需求规格文档
-Type: document-writing
+Type: requirements
 Version: 1.0.0
 
 # 可选字段
 Author: Your Name
-Tags:
-  - requirements
-  - specification
-  - documentation
 Input Parameters:
   - name: project_name
     type: string
@@ -55,6 +50,10 @@ Constraints:
   - 仅支持中文输入
   - 输出格式为 Markdown
 ```
+
+说明：
+- `tags` 不再属于正式支持的 Skill 元信息，系统会忽略该字段，也不会在技能管理页面展示
+- 技能管理页只展示受支持的元信息字段和扫描出的内部资源文件
 
 ### 详细描述部分
 
@@ -80,7 +79,18 @@ Constraints:
 
 3. **可选文件**：
    - `scripts/helper.py` 等辅助模块
-   - `reference/` 目录中的文档和示例
+   - `templates/` 下的模板文件
+   - `reference/` 或 `references/` 目录中的文档和示例
+
+### 资源展示规则
+
+技能管理页会自动扫描并展示以下资源：
+- `scripts/` 下的文件，归类为“脚本工具”
+- `templates/` 下的文件，归类为“模板文件”
+- `reference/` 或 `references/` 下的文件，归类为“参考资料”
+- 其他非隐藏文件，归类为“其他资源”
+
+隐藏文件和 `skill.md` 本身不会出现在资源清单中。
 
 ### 实现规范
 

@@ -1,0 +1,160 @@
+{
+  "modules": [
+    {
+      "id": "mod-1a8a0f43fe9d",
+      "path": "modules/业务保障管理系统-业务资产管理-业务全景概览.md",
+      "name": "业务全景概览",
+      "aliases": []
+    },
+    {
+      "id": "mod-5e32abb2a6f8",
+      "path": "modules/业务保障管理系统-业务资产管理-业务系统管理.md",
+      "name": "业务系统管理",
+      "aliases": []
+    },
+    {
+      "id": "mod-43800cfa05dc",
+      "path": "modules/业务保障管理系统-保障资产管理-API资产管理.md",
+      "name": "API资产管理",
+      "aliases": []
+    },
+    {
+      "id": "mod-2d26ddf0ceb8",
+      "path": "modules/业务保障管理系统-保障资产管理-云主机资产管理.md",
+      "name": "云主机资产管理",
+      "aliases": []
+    },
+    {
+      "id": "mod-2d51b3ca9f06",
+      "path": "modules/业务保障管理系统-保障资产管理-安全设备资产管理.md",
+      "name": "安全设备资产管理",
+      "aliases": []
+    },
+    {
+      "id": "mod-0d07c7bfa241",
+      "path": "modules/业务保障管理系统-保障资产管理-终端资产管理.md",
+      "name": "终端资产管理",
+      "aliases": []
+    },
+    {
+      "id": "mod-2757f018dbdc",
+      "path": "modules/业务保障管理系统-保障资源管理-人员管理.md",
+      "name": "人员管理",
+      "aliases": []
+    },
+    {
+      "id": "mod-7f2d8c5bf315",
+      "path": "modules/业务保障管理系统-保障资源管理-网段管理.md",
+      "name": "网段管理",
+      "aliases": []
+    },
+    {
+      "id": "mod-be9e7feb136a",
+      "path": "modules/业务保障管理系统-协同工作中心-任务执行记录.md",
+      "name": "任务执行记录",
+      "aliases": []
+    },
+    {
+      "id": "mod-979cba68e406",
+      "path": "modules/业务保障管理系统-协同工作中心-协同任务管理.md",
+      "name": "协同任务管理",
+      "aliases": []
+    },
+    {
+      "id": "mod-1dcb237898c9",
+      "path": "modules/业务保障管理系统-系统运维监控-业务运维概览.md",
+      "name": "业务运维概览",
+      "aliases": []
+    },
+    {
+      "id": "mod-f165f545688d",
+      "path": "modules/业务保障管理系统-系统运维监控-业务运维监控详情.md",
+      "name": "业务运维监控详情",
+      "aliases": []
+    },
+    {
+      "id": "mod-3b6d6467d4a6",
+      "path": "modules/业务保障管理系统-系统运维监控-云服务运维监控详情.md",
+      "name": "云服务运维监控详情",
+      "aliases": []
+    },
+    {
+      "id": "mod-08e2b16083a6",
+      "path": "modules/业务保障管理系统-系统运维监控-设备运维监控详情.md",
+      "name": "设备运维监控详情",
+      "aliases": []
+    },
+    {
+      "id": "mod-aacdbed9b801",
+      "path": "modules/业务保障管理系统-脆弱性管理-脆弱性总览.md",
+      "name": "脆弱性总览",
+      "aliases": []
+    },
+    {
+      "id": "mod-4bd9a751de87",
+      "path": "modules/业务保障管理系统-资产信息运营-异常资产监测.md",
+      "name": "异常资产监测",
+      "aliases": []
+    },
+    {
+      "id": "mod-5ed515390047",
+      "path": "modules/业务保障管理系统-资产信息运营-资产发现.md",
+      "name": "资产发现",
+      "aliases": []
+    },
+    {
+      "id": "mod-ce9f97011132",
+      "path": "modules/业务保障管理系统-资产脆弱性管理-脆弱性管理.md",
+      "name": "脆弱性管理",
+      "aliases": []
+    },
+    {
+      "id": "mod-fbef31d80a84",
+      "path": "modules/业务保障管理系统-运维告警管理-告警总览.md",
+      "name": "告警总览",
+      "aliases": []
+    },
+    {
+      "id": "mod-357ec2e5a228",
+      "path": "modules/业务保障管理系统-运维告警管理-告警管理.md",
+      "name": "告警管理",
+      "aliases": []
+    },
+    {
+      "id": "mod-d36736e81f2a",
+      "path": "modules/业务协同管理系统-业务运行保障-脆弱性管理.md",
+      "name": "脆弱性管理",
+      "aliases": []
+    },
+    {
+      "id": "mod-d73c18b62eb9",
+      "path": "modules/业务协同管理系统-业务运行保障-资产监测.md",
+      "name": "资产监测",
+      "aliases": []
+    },
+    {
+      "id": "mod-cdb9574223a4",
+      "path": "modules/业务协同管理系统-业务运行保障-运维告警.md",
+      "name": "运维告警",
+      "aliases": []
+    },
+    {
+      "id": "mod-85108161ed1a",
+      "path": "modules/业务协同管理系统-任务管理-任务处置记录.md",
+      "name": "任务处置记录",
+      "aliases": []
+    },
+    {
+      "id": "mod-db968e981c3f",
+      "path": "modules/业务协同管理系统-任务管理-待办任务中心.md",
+      "name": "待办任务中心",
+      "aliases": []
+    },
+    {
+      "id": "mod-69da3970a912",
+      "path": "modules/业务协同管理系统-资产管理-资产管理.md",
+      "name": "资产管理",
+      "aliases": []
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "doc_type": "general",
+  "doc_type_label": "通用文档",
+  "doc_name": "LLM集成模块",
+  "requested_name": "LLM 集成模块",
+  "version": "1.0.1",
+  "date": "2026-03-17",
+  "created_at": "2026-03-31T05:55:51.449784Z",
+  "conversation_id": "e0b05b08-4c60-4cad-9b74-b9e6d4dae614",
+  "round_id": null,
+  "change_summary": null,
+  "previous_version": null,
+  "skill_id": null,
+  "aliases": [
+    "LLM集成模块",
+    "LLM集成",
+    "集成模块",
+    "LLM 集成模块",
+    "集成"
+  ],
+  "source_path": "backend/docs/document-writing/LLM 集成模块/2026-03-17/v1.0.1.md",
+  "source_version": "1.0.1"
+}

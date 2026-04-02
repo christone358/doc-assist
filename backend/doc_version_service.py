@@ -1,14 +1,15 @@
 """
 Document Version Management Service
 
-统一负责文档正式版本的保存、查询、加载与名称归一。
+统一负责文档正式版本的保存、查询、加载、迁移与名称归一。
 
 存储结构：
   doc_output/[doc_type]/[canonical_doc_name]/[YYYY-MM-DD]/v[X.Y.Z].md
 
-兼容策略：
-- 新保存统一落在仓库根目录下的 doc_output/
-- 查询会同时兼容历史目录（backend/docs、docs）
+当前策略：
+- 正式版本只从仓库根目录下的 doc_output/ 读取与写入
+- legacy 正式输出（如 backend/docs、docs）通过显式迁移收敛到 doc_output/
+- backend/docs/conversations/ 保留为会话日志目录，不参与正式文档查询
 - 同一文档类型下，对名称做“标题后缀剥离 + 别名归档 + 模糊匹配”解析，
   尽量将“同一对象不同叫法”合并到同一个文档目录
 """
@@ -16,12 +17,13 @@ Document Version Management Service
 import json
 import logging
 import re
+import shutil
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Iterable, Optional, List, Tuple
+from typing import Any, Dict, Iterable, Optional, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +109,12 @@ GENERIC_ENTITY_SUFFIXES = [
     r"包$",
 ]
 
+GENERIC_ENTITY_DESCRIPTORS = [
+    r"管理",
+    r"配置",
+    r"服务",
+]
+
 
 def _dedupe(items: Iterable[str]) -> List[str]:
     seen = set()
@@ -152,7 +160,7 @@ class VersionRef:
         try:
             return str(self.file_path.relative_to(PROJECT_ROOT))
         except ValueError:
-            return self.docs_relative_path
+            return str(Path(self.docs_root.name) / self.docs_relative_path)
 
     @property
     def version_tuple(self) -> Tuple[int, int, int]:
@@ -191,6 +199,7 @@ class DocumentVersionService:
             if Path(root).resolve() != self.docs_root.resolve()
         ]
         self.docs_root.mkdir(parents=True, exist_ok=True)
+        self._migration_completed = False
 
     # ------------------------------------------------------------------
     # Write
@@ -231,7 +240,7 @@ class DocumentVersionService:
         requested_name = (doc_name or "").strip() or series.doc_name
         aliases = self._merge_aliases(series.aliases, requested_name, series.doc_name)
         self._write_series_meta(series, aliases)
-        await self._write_meta(
+        self._write_meta(
             file_path=file_path,
             doc_type=series.doc_type,
             doc_type_label=series.doc_type_label,
@@ -304,8 +313,12 @@ class DocumentVersionService:
         refs.sort(key=lambda ref: (ref.date, ref.version_tuple))
         return refs
 
-    async def list_documents(self, doc_type: Optional[str] = None) -> List[dict]:
-        """List documents, optionally filtered by type."""
+    async def list_documents(
+        self,
+        doc_type: Optional[str] = None,
+        query: Optional[str] = None,
+    ) -> List[dict]:
+        """List documents, optionally filtered by type and document name query."""
         results = []
         types = (
             [self._canonical_doc_type(doc_type)]
@@ -318,19 +331,62 @@ class DocumentVersionService:
                 ref = self._find_latest_ref(series)
                 if ref is None:
                     continue
-                results.append({
+                updated_at = self.ref_updated_at(ref)
+                document = {
                     "doc_type": series.doc_type,
                     "doc_type_label": series.doc_type_label,
                     "doc_name": series.doc_name,
                     "display_name": series.doc_name,
                     "latest_version": ref.version,
                     "latest_date": ref.date,
+                    "latest_updated_at": updated_at,
                     "path": ref.relative_path,
                     "aliases": series.aliases,
-                })
+                }
+                if self._matches_document_query(document, query):
+                    results.append(document)
 
-        results.sort(key=lambda item: (item["latest_date"], item["doc_type"], item["doc_name"]), reverse=True)
+        results.sort(
+            key=lambda item: (
+                item.get("latest_updated_at") or item["latest_date"],
+                item["doc_type"],
+                item["doc_name"],
+            ),
+            reverse=True,
+        )
         return results
+
+    def migrate_legacy_outputs(self, *, cleanup: bool = True) -> Dict[str, int]:
+        """Migrate legacy formal outputs into doc_output/ and optionally clean sources."""
+        summary = {
+            "migrated": 0,
+            "skipped": 0,
+            "reversioned": 0,
+            "deleted_dirs": 0,
+        }
+
+        for legacy_root in self.legacy_docs_roots:
+            if not legacy_root.exists():
+                continue
+
+            legacy_files = sorted(
+                self._iter_legacy_version_files(legacy_root),
+                key=lambda item: (
+                    item["date"],
+                    item["version_tuple"],
+                    item["created_at"],
+                    str(item["file_path"]),
+                ),
+            )
+            for item in legacy_files:
+                result = self._migrate_legacy_version(item)
+                summary[result] += 1
+
+            if cleanup:
+                summary["deleted_dirs"] += self._cleanup_legacy_outputs(legacy_root)
+
+        self._migration_completed = True
+        return summary
 
     # ------------------------------------------------------------------
     # Helpers: resolution
@@ -359,40 +415,37 @@ class DocumentVersionService:
 
     def _all_doc_types(self) -> List[str]:
         types = set(DOC_TYPE_CONFIG.keys())
-        for root in self._all_roots():
-            if not root.exists():
-                continue
-            for item in root.iterdir():
-                if item.is_dir() and item.name != "conversations":
+        if self.docs_root.exists():
+            for item in self.docs_root.iterdir():
+                if item.is_dir():
                     types.add(self._canonical_doc_type(item.name))
         return sorted(types)
 
     def _iter_merged_series(self, doc_type: str) -> Iterable[SeriesInfo]:
         merged: dict[str, SeriesInfo] = {}
 
-        for root in self._all_roots():
-            type_dir = root / doc_type
-            if not type_dir.exists():
+        type_dir = self.docs_root / doc_type
+        if not type_dir.exists():
+            return merged.values()
+
+        for series_dir in sorted(type_dir.iterdir()):
+            if not series_dir.is_dir():
                 continue
 
-            for series_dir in sorted(type_dir.iterdir()):
-                if not series_dir.is_dir():
-                    continue
-
-                series = self._load_series_info(doc_type, root, series_dir)
-                key = _normalize_text(series.doc_name)
-                existing = merged.get(key)
-                if existing is None:
-                    merged[key] = series
-                else:
-                    merged[key] = SeriesInfo(
-                        docs_root=existing.docs_root,
-                        doc_type=doc_type,
-                        doc_type_label=self._doc_type_label(doc_type),
-                        doc_name=existing.doc_name,
-                        dir_name=existing.dir_name,
-                        aliases=self._merge_aliases(existing.aliases, *series.aliases),
-                    )
+            series = self._load_series_info(doc_type, self.docs_root, series_dir)
+            key = _normalize_text(series.doc_name)
+            existing = merged.get(key)
+            if existing is None:
+                merged[key] = series
+            else:
+                merged[key] = SeriesInfo(
+                    docs_root=existing.docs_root,
+                    doc_type=doc_type,
+                    doc_type_label=self._doc_type_label(doc_type),
+                    doc_name=existing.doc_name,
+                    dir_name=existing.dir_name,
+                    aliases=self._merge_aliases(existing.aliases, *series.aliases),
+                )
 
         return merged.values()
 
@@ -425,18 +478,6 @@ class DocumentVersionService:
             or best_score >= 0.93
             or (best_score >= 0.82 and best_score - second_score >= 0.08)
         ):
-            if create and best_series.docs_root != self.docs_root:
-                migrated = SeriesInfo(
-                    docs_root=self.docs_root,
-                    doc_type=best_series.doc_type,
-                    doc_type_label=best_series.doc_type_label,
-                    doc_name=best_series.doc_name,
-                    dir_name=self._sanitize_dir_name(best_series.doc_name),
-                    aliases=self._merge_aliases(best_series.aliases, cleaned_name),
-                )
-                self._write_series_meta(migrated, migrated.aliases)
-                return migrated
-
             if best_series.docs_root == self.docs_root:
                 aliases = self._merge_aliases(best_series.aliases, cleaned_name)
                 if aliases != best_series.aliases:
@@ -541,6 +582,25 @@ class DocumentVersionService:
         if entity_trimmed and entity_trimmed != base:
             aliases.append(entity_trimmed)
 
+        descriptor_trimmed = base
+        for descriptor in GENERIC_ENTITY_DESCRIPTORS:
+            descriptor_trimmed = re.sub(
+                rf"{descriptor}(?=(?:{'|'.join(GENERIC_ENTITY_SUFFIXES)}))",
+                "",
+                descriptor_trimmed,
+            ).strip()
+        if descriptor_trimmed and descriptor_trimmed != base:
+            aliases.append(descriptor_trimmed)
+
+        no_acronym_prefix = re.sub(r"^[A-Za-z0-9]+\s*", "", base).strip()
+        if no_acronym_prefix and no_acronym_prefix != base:
+            aliases.append(no_acronym_prefix)
+
+        if descriptor_trimmed:
+            no_acronym_descriptor_trimmed = re.sub(r"^[A-Za-z0-9]+\s*", "", descriptor_trimmed).strip()
+            if no_acronym_descriptor_trimmed and no_acronym_descriptor_trimmed != descriptor_trimmed:
+                aliases.append(no_acronym_descriptor_trimmed)
+
         no_space = re.sub(r"\s+", "", base)
         if no_space and no_space != base:
             aliases.append(no_space)
@@ -573,17 +633,17 @@ class DocumentVersionService:
         refs: List[VersionRef] = []
         requested_aliases = self._build_name_aliases(series.doc_type, series.doc_name)
 
-        for root in self._all_roots():
-            type_dir = root / series.doc_type
-            if not type_dir.exists():
+        type_dir = self.docs_root / series.doc_type
+        if not type_dir.exists():
+            return refs
+
+        for series_dir in type_dir.iterdir():
+            if not series_dir.is_dir():
                 continue
-            for series_dir in type_dir.iterdir():
-                if not series_dir.is_dir():
-                    continue
-                current = self._load_series_info(series.doc_type, root, series_dir)
-                if self._score_series_match(requested_aliases, current.aliases) < 0.82:
-                    continue
-                refs.extend(self._list_refs_in_dir(current))
+            current = self._load_series_info(series.doc_type, self.docs_root, series_dir)
+            if self._score_series_match(requested_aliases, current.aliases) < 0.82:
+                continue
+            refs.extend(self._list_refs_in_dir(current))
 
         refs.sort(key=lambda ref: (ref.date, ref.version_tuple))
         return refs
@@ -627,18 +687,173 @@ class DocumentVersionService:
             return None
         return max(same_day_refs, key=lambda ref: ref.version_tuple)
 
-    def _all_roots(self) -> List[Path]:
-        roots = [self.docs_root]
-        roots.extend(self.legacy_docs_roots)
-        unique: List[Path] = []
-        seen = set()
-        for root in roots:
-            resolved = str(root.resolve())
-            if resolved in seen:
+    def _matches_document_query(self, document: dict, query: Optional[str]) -> bool:
+        if not query:
+            return True
+
+        query_aliases = self._build_name_aliases(document["doc_type"], query)
+        if not query_aliases:
+            return True
+
+        document_aliases = self._merge_aliases(
+            [document["doc_name"]],
+            *(document.get("aliases") or []),
+        )
+        return self._score_series_match(query_aliases, document_aliases) >= 0.82
+
+    def _iter_legacy_version_files(self, legacy_root: Path) -> Iterable[Dict[str, Any]]:
+        for file_path in sorted(legacy_root.rglob("v*.md")):
+            if not file_path.is_file():
                 continue
-            unique.append(root)
-            seen.add(resolved)
-        return unique
+            if "conversations" in file_path.parts:
+                continue
+
+            match = VERSION_RE.match(file_path.name)
+            if not match:
+                continue
+
+            rel_path = file_path.relative_to(legacy_root)
+            meta = self._read_json(file_path.with_suffix(".meta.json"))
+            legacy_type = self._canonical_doc_type(meta.get("doc_type") or rel_path.parts[0])
+            date = str(meta.get("date") or file_path.parent.name)
+            version = str(meta.get("version") or f"{match.group(1)}.{match.group(2)}.{match.group(3)}")
+            created_at = str(meta.get("created_at") or "")
+            requested_name = (
+                (meta.get("requested_name") or "").strip()
+                or (meta.get("doc_name") or "").strip()
+                or self._legacy_doc_name_from_path(rel_path)
+            )
+            aliases = self._merge_aliases(
+                meta.get("aliases") or [],
+                requested_name,
+                rel_path.parts[-3] if len(rel_path.parts) >= 4 else "",
+            )
+
+            yield {
+                "legacy_root": legacy_root,
+                "file_path": file_path,
+                "meta": meta,
+                "doc_type": legacy_type,
+                "requested_name": requested_name,
+                "date": date,
+                "version": version,
+                "version_tuple": tuple(int(x) for x in version.split(".")),
+                "created_at": created_at,
+                "content": file_path.read_text(encoding="utf-8"),
+                "aliases": aliases,
+            }
+
+    def _migrate_legacy_version(self, item: Dict[str, Any]) -> str:
+        series = self._resolve_series(item["doc_type"], item["requested_name"], create=True)
+        assert series is not None
+
+        aliases = self._merge_aliases(series.aliases, *(item["aliases"] or []), series.doc_name)
+        if aliases != series.aliases:
+            series = SeriesInfo(
+                docs_root=series.docs_root,
+                doc_type=series.doc_type,
+                doc_type_label=series.doc_type_label,
+                doc_name=series.doc_name,
+                dir_name=series.dir_name,
+                aliases=aliases,
+            )
+            self._write_series_meta(series, aliases)
+
+        target_date_dir = self._date_dir(series, item["date"])
+        target_date_dir.mkdir(parents=True, exist_ok=True)
+
+        target_version = item["version"]
+        target_path = target_date_dir / f"v{target_version}.md"
+        result = "migrated"
+
+        if target_path.exists():
+            existing = target_path.read_text(encoding="utf-8")
+            if existing == item["content"]:
+                return "skipped"
+            target_version = self._next_available_version(series, item["date"], item["version"])
+            target_path = target_date_dir / f"v{target_version}.md"
+            result = "reversioned"
+
+        target_path.write_text(item["content"], encoding="utf-8")
+        self._write_meta(
+            file_path=target_path,
+            doc_type=series.doc_type,
+            doc_type_label=series.doc_type_label,
+            doc_name=series.doc_name,
+            requested_name=item["requested_name"] or series.doc_name,
+            version=target_version,
+            date=item["date"],
+            conversation_id=item["meta"].get("conversation_id"),
+            round_id=item["meta"].get("round_id"),
+            change_summary=item["meta"].get("change_summary"),
+            skill_id=item["meta"].get("skill_id"),
+            previous_version=item["meta"].get("previous_version"),
+            aliases=aliases,
+            source_path=self._project_relative_or_absolute(item["file_path"]),
+            source_version=item["version"],
+        )
+        return result
+
+    def _legacy_doc_name_from_path(self, rel_path: Path) -> str:
+        if len(rel_path.parts) >= 4:
+            return rel_path.parts[-3]
+        return ""
+
+    def _next_available_version(self, series: SeriesInfo, date: str, base_version: str) -> str:
+        refs = [ref for ref in self._list_refs_for_series(series) if ref.date == date]
+        taken = {ref.version for ref in refs}
+        if base_version not in taken:
+            return base_version
+
+        major, minor, patch = (int(x) for x in base_version.split("."))
+        while True:
+            patch += 1
+            candidate = f"{major}.{minor}.{patch}"
+            if candidate not in taken:
+                return candidate
+
+    def _cleanup_legacy_outputs(self, legacy_root: Path) -> int:
+        deleted = 0
+        for child in legacy_root.iterdir():
+            if not child.is_dir():
+                continue
+            if child.name == "conversations":
+                continue
+            if not self._is_legacy_output_dir(child.name):
+                continue
+            shutil.rmtree(child)
+            deleted += 1
+        return deleted
+
+    def _read_json(self, path: Path) -> Dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("Failed to load metadata %s: %s", path, exc)
+            return {}
+
+    def _project_relative_or_absolute(self, path: Path) -> str:
+        try:
+            return str(path.relative_to(PROJECT_ROOT))
+        except ValueError:
+            return str(path)
+
+    def ref_metadata(self, ref: VersionRef) -> Dict[str, Any]:
+        return self._read_json(ref.file_path.with_suffix(".meta.json"))
+
+    def ref_updated_at(self, ref: VersionRef) -> str:
+        meta = self.ref_metadata(ref)
+        created_at = meta.get("created_at")
+        if created_at:
+            return str(created_at)
+        modified_at = datetime.fromtimestamp(ref.file_path.stat().st_mtime, tz=timezone.utc)
+        return modified_at.isoformat().replace("+00:00", "Z")
+
+    def _is_legacy_output_dir(self, directory_name: str) -> bool:
+        canonical = self._canonical_doc_type(directory_name)
+        return canonical in DOC_TYPE_CONFIG
 
     # ------------------------------------------------------------------
     # Helpers: metadata
@@ -657,7 +872,7 @@ class DocumentVersionService:
         meta_path = series.series_dir / SERIES_META_FILENAME
         meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    async def _write_meta(
+    def _write_meta(
         self,
         *,
         file_path: Path,
@@ -673,6 +888,8 @@ class DocumentVersionService:
         skill_id: Optional[str],
         previous_version: Optional[str],
         aliases: List[str],
+        source_path: Optional[str] = None,
+        source_version: Optional[str] = None,
     ) -> None:
         meta = {
             "doc_type": doc_type,
@@ -689,6 +906,10 @@ class DocumentVersionService:
             "skill_id": skill_id,
             "aliases": aliases,
         }
+        if source_path:
+            meta["source_path"] = source_path
+        if source_version:
+            meta["source_version"] = source_version
         meta_path = file_path.with_suffix(".meta.json")
         meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
 

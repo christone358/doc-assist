@@ -76,9 +76,8 @@ async def test_select_skill_matches_capability(agent):
         id="write-requirements",
         name="需求文档Skill",
         description="编写需求规格文档",
-        skill_type="requirements",
+        type="requirements",
         capabilities=["需求", "规格", "用例"],
-        tags=[],
     )
     agent._skill_manager = MagicMock()
     agent._skill_manager.get_all_skills = AsyncMock(return_value=[mock_skill])
@@ -102,9 +101,8 @@ def test_build_system_prompt_with_skill(agent):
         id="test",
         name="测试Skill",
         description="测试描述",
-        skill_type="test",
+        type="test",
         capabilities=["测试能力"],
-        tags=[],
     )
     prompt = agent._build_system_prompt(skill=skill, facts_context=[])
     assert "测试Skill" in prompt

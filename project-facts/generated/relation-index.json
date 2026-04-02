@@ -1,0 +1,475 @@
+{
+  "modules": {
+    "mod-1a8a0f43fe9d": {
+      "usecases": [],
+      "submodules": [
+        "业务健康监测"
+      ],
+      "function_points": [
+        "包括业务可用性监测、业务指标统计"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-5e32abb2a6f8": {
+      "usecases": [],
+      "submodules": [
+        "业务系统列表",
+        "资产登记维护",
+        "资产画像详情",
+        "4、关联资产存在的告警、脆弱性；"
+      ],
+      "function_points": [
+        "资产统计视图",
+        "业务资产查询",
+        "资产登记",
+        "编辑",
+        "删除",
+        "资产画像详情"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-43800cfa05dc": {
+      "usecases": [],
+      "submodules": [
+        "API资产列表"
+      ],
+      "function_points": [
+        "API资产查询",
+        "资产登记",
+        "资产导入",
+        "资产编辑",
+        "资产详情"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-2d26ddf0ceb8": {
+      "usecases": [],
+      "submodules": [
+        "云服务资产列表"
+      ],
+      "function_points": [
+        "设备资产查询",
+        "API自动同步",
+        "资产导入",
+        "资产更新",
+        "资产详情"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-2d51b3ca9f06": {
+      "usecases": [],
+      "submodules": [
+        "设备资产列表"
+      ],
+      "function_points": [
+        "设备资产查询",
+        "资产新增",
+        "资产导入",
+        "资产编辑",
+        "资产详情",
+        "资产删除"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-0d07c7bfa241": {
+      "usecases": [],
+      "submodules": [
+        "终端资产列表"
+      ],
+      "function_points": [
+        "设备资产查询",
+        "资产登记",
+        "资产导入",
+        "资产编辑",
+        "资产详情"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-2757f018dbdc": {
+      "usecases": [],
+      "submodules": [
+        "人员管理"
+      ],
+      "function_points": [
+        "人员查询",
+        "人员新增",
+        "人员编辑",
+        "人员详情",
+        "人员删除"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-7f2d8c5bf315": {
+      "usecases": [],
+      "submodules": [
+        "网段管理"
+      ],
+      "function_points": [
+        "网段查询",
+        "网段新增",
+        "网段详情",
+        "删除"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-be9e7feb136a": {
+      "usecases": [],
+      "submodules": [
+        "任务记录"
+      ],
+      "function_points": [
+        "统计任务",
+        "查询任务",
+        "查看任务详情",
+        "催办任务"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-979cba68e406": {
+      "usecases": [],
+      "submodules": [
+        "协同任务看板"
+      ],
+      "function_points": [
+        "待办",
+        "已办"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-1dcb237898c9": {
+      "usecases": [],
+      "submodules": [
+        "业务全景概览"
+      ],
+      "function_points": [
+        "包括全局健康度纵览、地理/区域视图、数据下钻入口"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-f165f545688d": {
+      "usecases": [],
+      "submodules": [
+        "业务运维监控详情"
+      ],
+      "function_points": [
+        "包括监控性能详情、关联日志、告警、依赖上下游资产关系"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-3b6d6467d4a6": {
+      "usecases": [],
+      "submodules": [
+        "云服务运维监控详情"
+      ],
+      "function_points": [
+        "云服务实例总览、云原生指标集成、配置与合规信息；"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-08e2b16083a6": {
+      "usecases": [],
+      "submodules": [
+        "设备运维监控详情"
+      ],
+      "function_points": [
+        "包括设备资产与状态总揽、指标监控、关联的告警、日志；"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-aacdbed9b801": {
+      "usecases": [],
+      "submodules": [
+        "脆弱性概览"
+      ],
+      "function_points": [
+        "脆弱性概览"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-4bd9a751de87": {
+      "usecases": [],
+      "submodules": [
+        "异常资产概览",
+        "异常清单"
+      ],
+      "function_points": [
+        "查询异常概览",
+        "导出统计报表",
+        "查询异常列表",
+        "查看异常详情",
+        "下发处置任务"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-5ed515390047": {
+      "usecases": [],
+      "submodules": [
+        "云服务对接配置"
+      ],
+      "function_points": [
+        "新增同步任务",
+        "查询同步记录"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-ce9f97011132": {
+      "usecases": [],
+      "submodules": [
+        "脆弱性列表",
+        "脆弱性检测",
+        "脆弱性详情"
+      ],
+      "function_points": [
+        "脆弱性视图统计",
+        "脆弱性检索",
+        "脆弱性列表",
+        "脆弱性导入",
+        "脆弱性扫描任务管理",
+        "脆弱性检测设备管理",
+        "脆弱性详情",
+        "下发处置任务",
+        "修复验证"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-fbef31d80a84": {
+      "usecases": [],
+      "submodules": [
+        "运维告警总览"
+      ],
+      "function_points": [
+        "告警概览"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-357ec2e5a228": {
+      "usecases": [],
+      "submodules": [
+        "告警列表",
+        "告警详情"
+      ],
+      "function_points": [
+        "告警视图统计",
+        "告警检索",
+        "告警列表",
+        "告警详情",
+        "下发处置任务"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-d36736e81f2a": {
+      "usecases": [],
+      "submodules": [
+        "脆弱性总览",
+        "脆弱性列表",
+        "脆弱性详情"
+      ],
+      "function_points": [
+        "脆弱性概览",
+        "脆弱性视图统计",
+        "脆弱性检索",
+        "脆弱性列表",
+        "脆弱性详情",
+        "脆弱性处置",
+        "下发处置验证任务"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-d73c18b62eb9": {
+      "usecases": [],
+      "submodules": [
+        "业务资产健康监测"
+      ],
+      "function_points": [
+        "资产查看"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-cdb9574223a4": {
+      "usecases": [],
+      "submodules": [
+        "告警总览",
+        "告警列表",
+        "告警详情"
+      ],
+      "function_points": [
+        "告警概览",
+        "告警视图统计",
+        "告警检索",
+        "告警列表",
+        "脆弱性详情",
+        "下告警处置"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-85108161ed1a": {
+      "usecases": [],
+      "submodules": [
+        "任务记录"
+      ],
+      "function_points": [
+        "统计任务",
+        "查询任务",
+        "查看任务详情",
+        "催办任务"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-db968e981c3f": {
+      "usecases": [],
+      "submodules": [
+        "协同任务看板"
+      ],
+      "function_points": [
+        "待办",
+        "已办"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    },
+    "mod-69da3970a912": {
+      "usecases": [],
+      "submodules": [
+        "资产总览",
+        "我的资产"
+      ],
+      "function_points": [
+        "资产统计",
+        "资产登记",
+        "资产信息变更",
+        "资产查询",
+        "资产详情"
+      ],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": [
+        "无"
+      ]
+    }
+  }
+}

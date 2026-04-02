@@ -34,7 +34,8 @@ skills/
     ├── skill.md                 # 必需；Skill 定义文件
     ├── scripts/
     │   └── main.py              # 推荐；主实现脚本
-    └── reference/               # 可选；模板、示例等参考资料
+    ├── templates/               # 可选；文档模板
+    └── references/              # 可选；指南、示例等参考资料
         └── template.md
 ```
 
@@ -57,13 +58,9 @@ skills/
 ```yaml
 Skill Name: 需求规格文档编写
 Description: 根据用户需求和项目事实信息，编写符合规范的软件需求规格文档（SRS）
-Type: document-writing
+Type: requirements
 Version: 1.0.0
 Author: Your Name
-Tags:
-  - requirements
-  - srs
-  - specification
 Input Parameters:
   - name: project_module
     type: string
@@ -91,7 +88,7 @@ Constraints:
 |------|------|------|
 | `Skill Name` | Skill 的中文名称，显示在 UI 中 | `需求规格文档编写` |
 | `Description` | 一句话描述 Skill 的功能 | `编写软件需求规格文档` |
-| `Type` | 固定值 `document-writing` | `document-writing` |
+| `Type` | Skill 类型或文档类型 | `requirements` |
 
 #### 可选字段
 
@@ -99,11 +96,25 @@ Constraints:
 |------|------|------|
 | `Version` | Skill 版本号 | `1.0.0` |
 | `Author` | 开发者姓名 | `张三` |
-| `Tags` | 标签列表，用于搜索 | `requirements, srs` |
 | `Input Parameters` | 参数定义列表 | 见上示例 |
 | `Output Format` | 输出格式，通常是 `markdown` | `markdown` |
 | `Capabilities` | Skill 能力列表，Agent 用于匹配用户意图 | 见上示例 |
 | `Constraints` | 约束条件 | 见上示例 |
+
+说明：
+- `tags` 已不再作为正式支持的 Skill 元信息，保留也会被系统忽略
+- 技能管理页面只展示受支持的元信息，以及从目录中自动发现的内部资源
+
+### 3.1.1 资源目录约定
+
+为了让技能管理页能正确展示资源，建议按以下目录组织文件：
+
+- `scripts/`：脚本工具与辅助执行文件
+- `templates/`：模板文件
+- `references/`：参考资料、示例、指南
+- `reference/`：旧目录名，系统仍兼容，但新 Skill 建议统一使用 `references/`
+
+系统会自动扫描 Skill 目录中的非隐藏文件，并按上述规则归类展示。
 
 ### 3.2 详细描述（推荐）
 

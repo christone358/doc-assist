@@ -1,0 +1,21 @@
+{
+  "doc_type": "user-manual",
+  "doc_type_label": "用户手册",
+  "doc_name": "LLM集成模块",
+  "requested_name": "LLM集成模块",
+  "version": "1.0.2",
+  "date": "2026-03-31",
+  "created_at": "2026-03-31T08:32:41.239459Z",
+  "conversation_id": "7eee4544-e4c1-418b-92e8-109a5034dd60",
+  "round_id": null,
+  "change_summary": null,
+  "previous_version": "1.0.1",
+  "skill_id": null,
+  "aliases": [
+    "LLM集成模块",
+    "LLM集成",
+    "集成模块",
+    "集成",
+    "LLM 集成模块"
+  ]
+}

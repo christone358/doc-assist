@@ -15,6 +15,7 @@
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.0",
     "@sveltejs/vite-plugin-svelte": "^3.0.0",
+    "cloc": "^2.6.0-cloc",
     "vite": "^5.0.0"
   }
 }

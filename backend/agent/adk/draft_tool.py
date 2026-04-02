@@ -8,7 +8,11 @@ get_current_draft Tool - 按需加载当前对话的已有草稿。
 import logging
 from typing import TYPE_CHECKING
 
-from google.adk.tools import ToolContext
+try:
+    from google.adk.tools import ToolContext
+except ModuleNotFoundError:  # pragma: no cover - fallback for unit tests
+    class ToolContext:  # type: ignore[override]
+        pass
 
 if TYPE_CHECKING:
     from agent.adk.runner_adapter import ConversationContext
@@ -62,12 +66,14 @@ def create_get_current_draft_tool(ctx: "ConversationContext"):
         # 双路输出：正文存入 loaded_base_draft 供 write_document 自动衔接，不进 ADK 历史
         ctx.loaded_base_draft = draft
 
-        # 同步恢复 doc_name，确保后续 write_document 继续写入同一文档目录（版本连续性）
+        # 同步恢复 doc_name / module_id，确保后续 write_document 继续写入同一文档目录，
+        # 并在修改场景下沿用同一模块身份，避免重新触发模块消歧。
         if not ctx.loaded_base_doc_name:
             # 优先从 session.state 读取（上一轮 write_document 保存的 module_name）
             state_doc_name = tool_context.state.get("module_name")
             if state_doc_name:
                 ctx.loaded_base_doc_name = state_doc_name
+                ctx.current_module_name = state_doc_name
                 logger.info(f"get_current_draft: 恢复 doc_name={state_doc_name} 来自 session.state")
             else:
                 # 回退：从 ConversationManager 的 writing_state 读取
@@ -75,11 +81,30 @@ def create_get_current_draft_tool(ctx: "ConversationContext"):
                     conv = await ctx.conversation_manager.get_conversation(ctx.conversation_id)
                     if conv and conv.writing_state and conv.writing_state.module_name:
                         ctx.loaded_base_doc_name = conv.writing_state.module_name
+                        ctx.current_module_name = conv.writing_state.module_name
                         logger.info(
                             f"get_current_draft: 恢复 doc_name={ctx.loaded_base_doc_name} 来自 writing_state"
                         )
                 except Exception as e:
                     logger.warning(f"get_current_draft: 恢复 doc_name 失败: {e}")
+
+        if not ctx.loaded_base_module_id:
+            state_module_id = tool_context.state.get("module_id")
+            if state_module_id:
+                ctx.loaded_base_module_id = state_module_id
+                ctx.current_module_id = state_module_id
+                logger.info(f"get_current_draft: 恢复 module_id={state_module_id} 来自 session.state")
+            else:
+                try:
+                    conv = await ctx.conversation_manager.get_conversation(ctx.conversation_id)
+                    if conv and conv.writing_state and conv.writing_state.module_id:
+                        ctx.loaded_base_module_id = conv.writing_state.module_id
+                        ctx.current_module_id = conv.writing_state.module_id
+                        logger.info(
+                            f"get_current_draft: 恢复 module_id={ctx.loaded_base_module_id} 来自 writing_state"
+                        )
+                except Exception as e:
+                    logger.warning(f"get_current_draft: 恢复 module_id 失败: {e}")
 
         summary = f"已加载草稿，共 {len(draft)} 字，可直接调用 write_document(context=\"\") 修改。"
         return summary

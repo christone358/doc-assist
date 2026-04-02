@@ -6,14 +6,24 @@ import logging
 import re
 from pathlib import Path
 from typing import Optional, List, Dict
-import asyncio
 
-from agent.models import SkillInfo
+from agent.models import SkillInfo, SkillResourceInfo
 
 logger = logging.getLogger(__name__)
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_SKILLS_DIR = PROJECT_ROOT / "skills"
 
-# Required metadata keys in skill.md frontmatter
-REQUIRED_METADATA_KEYS = ["name", "description"]
+REQUIRED_METADATA_KEYS = {
+    "name": ("name", "Skill Name"),
+    "description": ("description", "Description"),
+    "type": ("type", "Type"),
+}
+RESOURCE_CATEGORY_BY_DIR = {
+    "scripts": "script",
+    "templates": "template",
+    "reference": "reference",
+    "references": "reference",
+}
 
 
 class SkillLoader:
@@ -31,8 +41,8 @@ class SkillLoader:
             return False
 
         metadata = self._parse_metadata(skill_md)
-        for key in REQUIRED_METADATA_KEYS:
-            if key not in metadata:
+        for key, aliases in REQUIRED_METADATA_KEYS.items():
+            if self._get_metadata_value(metadata, *aliases) is None:
                 logger.warning(
                     f"Skill '{self.skill_id}': missing required field '{key}' in skill.md"
                 )
@@ -48,31 +58,17 @@ class SkillLoader:
 
         try:
             metadata = self._parse_metadata(skill_md)
-
-            tags_raw = metadata.get("tags", metadata.get("Tags", []))
-            if isinstance(tags_raw, str):
-                tags = [t.strip() for t in tags_raw.split(",")]
-            elif isinstance(tags_raw, list):
-                tags = tags_raw
-            else:
-                tags = []
-
-            caps_raw = metadata.get("capabilities", metadata.get("Capabilities", []))
-            if isinstance(caps_raw, str):
-                caps = [c.strip() for c in caps_raw.split(",")]
-            elif isinstance(caps_raw, list):
-                caps = caps_raw
-            else:
-                caps = []
+            caps = self._parse_list_metadata(metadata, "capabilities", "Capabilities")
+            resources = self._scan_resources(skill_md)
 
             return SkillInfo(
                 id=self.skill_id,
-                name=metadata.get("name", metadata.get("Skill Name", self.skill_id)),
-                description=metadata.get("description", metadata.get("Description", "")),
-                type=metadata.get("type", metadata.get("Type", "general")),
-                version=metadata.get("version", metadata.get("Version")),
-                tags=tags,
+                name=self._get_metadata_value(metadata, "name", "Skill Name", default=self.skill_id),
+                description=self._get_metadata_value(metadata, "description", "Description", default=""),
+                type=self._get_metadata_value(metadata, "type", "Type", default="general"),
+                version=self._get_metadata_value(metadata, "version", "Version"),
                 capabilities=caps,
+                resources=resources,
                 skill_md_path=str(skill_md),
             )
 
@@ -119,6 +115,48 @@ class SkillLoader:
 
         return {}
 
+    def _get_metadata_value(self, metadata: dict, *keys: str, default=None):
+        for key in keys:
+            if key in metadata:
+                value = metadata[key]
+                if isinstance(value, str):
+                    value = value.strip()
+                return value
+        return default
+
+    def _parse_list_metadata(self, metadata: dict, *keys: str) -> List[str]:
+        raw = self._get_metadata_value(metadata, *keys, default=[])
+        if isinstance(raw, str):
+            return [item.strip() for item in raw.split(",") if item.strip()]
+        if isinstance(raw, list):
+            return [str(item).strip() for item in raw if str(item).strip()]
+        return []
+
+    def _scan_resources(self, skill_md: Path) -> List[SkillResourceInfo]:
+        resources: List[SkillResourceInfo] = []
+        for path in sorted(self.skill_dir.rglob("*")):
+            if not path.is_file():
+                continue
+
+            rel_path = path.relative_to(self.skill_dir)
+            rel_parts = rel_path.parts
+            if any(part.startswith(".") for part in rel_parts):
+                continue
+            if path == skill_md:
+                continue
+
+            top_level = rel_parts[0] if rel_parts else ""
+            category = RESOURCE_CATEGORY_BY_DIR.get(top_level, "other")
+            resources.append(
+                SkillResourceInfo(
+                    category=category,
+                    path=rel_path.as_posix(),
+                    name=path.name,
+                )
+            )
+
+        return resources
+
     def _parse_simple_yaml(self, text: str) -> dict:
         """Parse a simple YAML block (key: value, lists as `- item`)."""
         result = {}
@@ -160,8 +198,8 @@ class SkillLoader:
 class SkillManager:
     """Manages all loaded skills."""
 
-    def __init__(self, skills_dir: str = "skills"):
-        self.skills_dir = Path(skills_dir)
+    def __init__(self, skills_dir: str | Path = DEFAULT_SKILLS_DIR):
+        self.skills_dir = Path(skills_dir).resolve()
         self._skills: Dict[str, SkillInfo] = {}
 
     async def discover_and_load(self) -> None:

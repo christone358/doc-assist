@@ -35,7 +35,7 @@ export function triggerConvRefresh() { convRefresh.update(n => n + 1); }
 export const notification = writable(null);
 
 // Agent Observability Panel
-// ObsEvent: { type: 'thinking'|'skill'|'status'|'question'|'done', content, extra, ts }
+// ObsEvent: { type: 'thinking'|'reflection'|'summary'|'skill'|'status'|'question'|'done', content, extra, ts }
 function createObsStore() {
   const { subscribe, update, set } = writable({ panelOpen: false, events: [] });
   return {
@@ -45,8 +45,12 @@ function createObsStore() {
     togglePanel: () => update(s => ({ ...s, panelOpen: !s.panelOpen })),
     clearEvents: () => update(s => ({ ...s, events: [] })),
     addEvent: (event) => update(s => {
-      // Merge consecutive thinking chunks into a single event
-      if (event.type === 'thinking' && s.events.length > 0 && s.events[s.events.length - 1].type === 'thinking') {
+      // Merge consecutive chunked text events into a single timeline item
+      if (
+        ['thinking', 'reflection', 'summary'].includes(event.type) &&
+        s.events.length > 0 &&
+        s.events[s.events.length - 1].type === event.type
+      ) {
         const updated = [...s.events];
         updated[updated.length - 1] = { ...updated[updated.length - 1], content: updated[updated.length - 1].content + event.content };
         return { ...s, events: updated };
