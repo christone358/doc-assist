@@ -26,13 +26,25 @@
 - **WHEN** 系统输出页面事实
 - **THEN** 页面事实 SHALL 同时包含来源页面路径、关键证据片段以及解析告警信息，使调用方能够追溯来源并识别不确定内容
 
-### Requirement: 系统向 Skill 提供原型查询能力
-系统 SHALL 提供可被文档编写 Skill 调用的原型查询能力，使 Skill 可以先定位模块关联页面，再按需读取页面详情。
+#### Scenario: 页面事实包含 LLM 可直接消费的摘要
+- **WHEN** 系统完成单页结构化解析
+- **THEN** 系统 SHALL 基于页面事实生成紧凑的 `llm_summary`，总结页面定位、关键区域、关键控件、用户可见反馈和主要交互，供 Agent 或 Skill 直接注入写作上下文
+
+### Requirement: 系统通过 MCP server 暴露原型查询能力
+系统 SHALL 通过 MCP server 暴露可被 Agent 和文档编写 Skill 调用的原型查询能力，使调用方可以先定位模块关联页面，再按需读取页面详情。
 
 #### Scenario: 查询模块关联页面列表
-- **WHEN** Skill 根据模块 ID 请求查看模块关联的原型页
+- **WHEN** Agent 或 Skill 调用 `prototypes.list_pages(module_ref)`
 - **THEN** 系统 SHALL 返回该模块档案中声明的页面名称及其匹配到的页面路径、标题和匹配状态
 
 #### Scenario: 查询单个页面详情
-- **WHEN** Skill 请求某个原型页面的详情
+- **WHEN** Agent 或 Skill 调用 `prototypes.get_page(page_ref)`
 - **THEN** 系统 SHALL 返回该页面的结构化页面事实、交互摘要、来源路径和解析告警，而不是返回整页 HTML 源码
+
+#### Scenario: 原型查询能力对外遵循 MCP 公共工具契约
+- **WHEN** MCP server 对外暴露原型工具
+- **THEN** 系统 SHALL 使用宿主无关的参数和结构化返回语义，不得要求调用方依赖宿主内部会话对象或 ADK 上下文才能正确调用
+
+#### Scenario: MCP 页面详情同时返回结构化数据与文本摘要
+- **WHEN** 调用方请求 `prototypes.get_page(page_ref)`
+- **THEN** 系统 SHALL 同时返回结构化页面事实和适合 LLM 消费的文本摘要，而不是要求调用方自行从 HTML 或原始 JSON 拼装可读内容

@@ -1,5 +1,14 @@
 {
   "modules": {
+    "mod-b901ca844d99": {
+      "usecases": [],
+      "submodules": [],
+      "function_points": [],
+      "apis": [],
+      "prototype_pages": [],
+      "packages_or_classes": [],
+      "dependencies": []
+    },
     "mod-1a8a0f43fe9d": {
       "usecases": [],
       "submodules": [
@@ -70,7 +79,10 @@
         "资产详情"
       ],
       "apis": [],
-      "prototype_pages": [],
+      "prototype_pages": [
+        "云主机管理",
+        "云主机详情"
+      ],
       "packages_or_classes": [],
       "dependencies": [
         "无"
@@ -316,7 +328,13 @@
         "修复验证"
       ],
       "apis": [],
-      "prototype_pages": [],
+      "prototype_pages": [
+        "主机漏洞管理",
+        "主机漏洞详情",
+        "web漏洞管理",
+        "web漏洞详情",
+        "脆弱性检测"
+      ],
       "packages_or_classes": [],
       "dependencies": [
         "无"

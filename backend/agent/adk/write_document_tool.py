@@ -2,7 +2,7 @@
 write_document Tool - 调用 LLM 生成文档，流式输出到 WebSocket。
 
 接收 skill_id（由 LLM 根据用户意图选择），工具内部加载对应 Skill 的写作规范，
-自动注入 ctx.collected_facts_parts 中已收集的项目事实，
+自动注入当前子 Agent working context 中已显式加载的 facts / skill resources / docs，
 以及 LLM 显式传入的 context（修改场景为草稿）。
 
 写作完成后，通过 tool_context.state 持久化草稿和 skill 选择，
@@ -13,7 +13,11 @@ import logging
 import re
 from typing import TYPE_CHECKING, Dict
 
-from google.adk.tools import ToolContext
+try:
+    from google.adk.tools import ToolContext
+except ModuleNotFoundError:  # pragma: no cover - fallback for unit tests
+    class ToolContext:  # type: ignore[override]
+        pass
 
 if TYPE_CHECKING:
     from agent.adk.runner_adapter import ConversationContext
@@ -82,13 +86,15 @@ def create_write_document_tool(ctx: "ConversationContext", skills_map: Dict[str,
         Args:
             skill_id: 所选 Skill 的 id（如"write-requirements"），系统自动加载写作规范。
             module_name: 当前写作的模块名称；纯对话场景传空字符串。
-            context: 修改场景传入已有草稿内容；新建场景或已通过 load_saved_document 加载历史版本时传空字符串。
+            context: 修改场景传入已有草稿内容；新建场景或已通过 `docs.load_saved` 加载历史版本时传空字符串。
             user_intent: 用户的写作意图描述。
 
         Returns:
             写作完成的摘要信息（如"文档已生成，共 N 字"），完整草稿通过 session.state 持久化。
         """
         from agent.adk.llm_adapter import get_litellm_model_config
+        from agent.adk.runner_adapter import emit_execution_event
+        from agent.models import ExecutionActor, ExecutionEventStatus, ExecutionPhase
         import litellm
 
         llm_config = get_litellm_model_config()
@@ -126,11 +132,16 @@ def create_write_document_tool(ctx: "ConversationContext", skills_map: Dict[str,
         # ── 构建写作上下文 ──────────────────────────────────────────────────
         # 优先级：
         #   1. context 参数有内容 → 对话内中间草稿（修改场景，LLM 从 get_current_draft 取得后传入）
-        #   2. context 为空 + ctx.loaded_base_draft 有内容 → 历史已保存版本（由 load_saved_document 写入）
+        #   2. context 为空 + ctx.loaded_base_draft 有内容 → 历史已保存版本（由 `docs.load_saved` 写入）
         #   3. 两者都空 → 纯新建场景
         effective_context = context.strip() or (ctx.loaded_base_draft or "")
 
-        final_parts: list = list(ctx.collected_facts_parts)
+        final_parts: list = []
+        final_parts.extend(ctx.loaded_facts_parts)
+        final_parts.extend(ctx.loaded_skill_resource_parts)
+        final_parts.extend(ctx.loaded_docs_parts)
+        if not final_parts:
+            final_parts.extend(ctx.collected_facts_parts)
         if effective_context:
             header = "## 已有草稿" if final_parts else ""
             final_parts.append(f"{header}\n{effective_context}".strip())
@@ -139,7 +150,9 @@ def create_write_document_tool(ctx: "ConversationContext", skills_map: Dict[str,
         logger.info(
             f"write_document: 开始生成 conversation={ctx.conversation_id}, "
             f"skill_id={skill_id}, module_name={module_name!r}, "
-            f"facts_parts={len(ctx.collected_facts_parts)}, "
+            f"facts_parts={len(ctx.loaded_facts_parts) or len(ctx.collected_facts_parts)}, "
+            f"skill_parts={len(ctx.loaded_skill_resource_parts)}, "
+            f"docs_parts={len(ctx.loaded_docs_parts)}, "
             f"context_chars={len(context)}, loaded_base_draft_chars={len(ctx.loaded_base_draft or '')}, "
             f"final_context_chars={len(final_context)}"
         )
@@ -161,6 +174,21 @@ def create_write_document_tool(ctx: "ConversationContext", skills_map: Dict[str,
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_message},
         ]
+        await emit_execution_event(
+            ctx,
+            execution_id=ctx.current_execution_id or ctx.orchestrator_execution_id,
+            parent_execution_id=ctx.orchestrator_execution_id if ctx.current_execution_id else None,
+            actor=ExecutionActor.SUBAGENT if ctx.current_execution_id else ExecutionActor.ORCHESTRATOR,
+            phase=ExecutionPhase.WRITE,
+            name="write_document",
+            status=ExecutionEventStatus.STARTED,
+            display_text=f"开始生成文档：{module_name or ctx.current_module_name or '未命名文档'}",
+            data={
+                "tool": "write_document",
+                "skill_id": skill_id,
+                "parent_node_id": ctx.current_skill_node_id if ctx.current_execution_id else None,
+            },
+        )
 
         full_text = ""
         usage = None
@@ -217,6 +245,29 @@ def create_write_document_tool(ctx: "ConversationContext", skills_map: Dict[str,
 
         logger.info(
             f"write_document: 生成完成 skill_id={skill_id}, chars={len(full_text)}, usage={usage}"
+        )
+        await emit_execution_event(
+            ctx,
+            execution_id=ctx.current_execution_id or ctx.orchestrator_execution_id,
+            parent_execution_id=ctx.orchestrator_execution_id if ctx.current_execution_id else None,
+            actor=ExecutionActor.SUBAGENT if ctx.current_execution_id else ExecutionActor.ORCHESTRATOR,
+            phase=ExecutionPhase.WRITE,
+            name="write_document",
+            status=ExecutionEventStatus.COMPLETED,
+            display_text=f"文档生成完成，共 {len(full_text)} 字",
+            data={
+                "tool": "write_document",
+                "skill_id": skill_id,
+                "chars": len(full_text),
+                "parent_node_id": ctx.current_skill_node_id if ctx.current_execution_id else None,
+                "output_preview": f"文档生成完成，共 {len(full_text)} 字",
+                "output_detail": (
+                    f"文档已生成。\n"
+                    f"- 技能：{skill_id}\n"
+                    f"- 模块：{effective_doc_name or module_name or '未命名文档'}\n"
+                    f"- 字数：{len(full_text)}"
+                ),
+            },
         )
 
         # 返回摘要字符串写入 ADK session 历史，完整草稿只在 session.state 中

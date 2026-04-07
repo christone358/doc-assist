@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from prototype_parser import build_generated_prototypes
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FACTS_ROOT = REPO_ROOT / "project-facts"
 
@@ -184,17 +186,17 @@ def _generate_module_id(seed: str) -> str:
 
 
 def scan_prototype_pages(prototypes_root: Path) -> List[Dict[str, str]]:
+    facts_root = prototypes_root.parent
+    generated = build_generated_prototypes(facts_root)
     pages: List[Dict[str, str]] = []
-    if not prototypes_root.exists():
-        return pages
-
-    for html_file in sorted(prototypes_root.rglob("*.html")):
-        if html_file.name.lower() == "index.html":
-            continue
+    for item in generated["page_index"]["pages"]:
         pages.append(
             {
-                "name": html_file.stem,
-                "path": str(html_file.relative_to(prototypes_root)),
+                "name": item.get("name", ""),
+                "path": item.get("path", ""),
+                "title": item.get("title", ""),
+                "id": item.get("id", ""),
+                "package_id": item.get("package_id", ""),
             }
         )
     return pages
@@ -388,7 +390,9 @@ def render_module_archive_markdown(module: ModuleArchive) -> str:
     lines.extend(["", "## 页面 / 原型"])
     if module.prototype_pages:
         for page in module.prototype_pages:
-            lines.append(f"- {page['name']}")
+            path = page.get("path", "").strip()
+            suffix = f" ({path})" if path else "（待匹配原型）"
+            lines.append(f"- {page['name']}{suffix}")
     else:
         lines.append("_待补充_")
 
@@ -477,7 +481,17 @@ def ensure_generated_views(facts_root: Path) -> Dict[str, Any]:
         path for path in sorted(modules_dir.glob("*.md"))
         if "模板" not in path.stem
     ]
-    prototype_pages = scan_prototype_pages(prototypes_root)
+    generated_prototypes = build_generated_prototypes(facts_root)
+    prototype_pages = [
+        {
+            "name": item.get("name", ""),
+            "path": item.get("path", ""),
+            "title": item.get("title", ""),
+            "id": item.get("id", ""),
+            "package_id": item.get("package_id", ""),
+        }
+        for item in generated_prototypes["page_index"]["pages"]
+    ]
     prototype_index = {page["name"]: page["path"] for page in prototype_pages}
     module_ids, identity_registry = _resolve_module_identity(facts_root, generated_dir, archive_paths)
     archives = [
@@ -521,11 +535,6 @@ def ensure_generated_views(facts_root: Path) -> Dict[str, Any]:
         json.dumps(relation_index, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    (prototypes_root / "page-index.json").write_text(
-        json.dumps(page_index, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-
     modules_md = "# 模块档案视图\n\n" + "\n\n---\n\n".join(render_module_view(module) for module in archives)
     (views_dir / "modules.md").write_text(modules_md.strip() + "\n", encoding="utf-8")
 

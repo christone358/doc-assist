@@ -1,0 +1,26 @@
+{
+  "page_id": "page-07753cc9e614",
+  "page_name": "任务执行记录",
+  "title": "任务执行记录",
+  "source_path": "prototypes/assets-system/任务执行记录.html",
+  "relative_path": "assets-system/任务执行记录.html",
+  "package_id": "assets-system",
+  "layout_sections": [],
+  "elements": {
+    "buttons": [],
+    "inputs": [],
+    "tables": [],
+    "tabs": [],
+    "dialogs": [],
+    "links": []
+  },
+  "visible_texts": [
+    "﻿"
+  ],
+  "messages": [],
+  "interactions": [],
+  "outgoing_links": [],
+  "evidence": [],
+  "parser_warnings": [],
+  "llm_summary": "页面“任务执行记录”，来源：assets-system/任务执行记录.html。"
+}

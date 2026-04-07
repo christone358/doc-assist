@@ -10,10 +10,9 @@ Sub-agent 使用独立 InMemorySessionService，ReAct 历史不写入主 Agent s
 并将执行摘要写入 ctx.last_skill_execution_summary 供后续轮次参考。
 """
 
-import importlib.util
 import logging
-import os
 import re
+import uuid
 from typing import TYPE_CHECKING, List
 
 try:
@@ -69,82 +68,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# ── 固定执行规范（注入到所有 Sub-agent instruction 末尾）───────────────────────
-
-_SUBAGENT_EXECUTION_SPEC = """
-
-## 执行规范
-
-你是专注于文档编写的 AI 助手，使用 ReAct 推理模式执行写作任务。
-请根据上方的写作规范完成任务，并遵守以下执行约束。
-
-### 可用通用工具
-
-- **resolve_target_module(target_ref)**：定位目标模块。
-  对于模块级写作任务，优先先调用它确认“写的是哪个模块”。
-  返回可能是：唯一模块、多个候选模块（歧义）或未找到。
-
-- **load_module_fact_sheet(target_ref)**：按模块聚合根加载模块事实主档。
-  在目标模块唯一明确后，优先调用它获取模块事实主文档正文，作为写作主上下文。
-  当前项目的模块事实主档已经覆盖模块级写作所需的描述、用例、功能点、API、页面、依赖等章节；拿到主档正文后，应直接基于该正文推理和写作。
-
-- **get_fact_overview(category)**：加载项目概览清单，用于定位写作对象。
-  category 可选：systems、subsystems、modules、usecases、function_points、apis、classes、prototypes。
-  兼容别名：interfaces。
-
-- **get_fact_detail(target_id, fact_type)**：加载某目标的详细事实信息。
-  对于模块型事实，target_id 可传稳定模块 ID，也可直接传模块名/别名，工具会自动解析；若同名模块有多个，工具会返回歧义提示。
-  fact_type 可选：
-  module、description、usecases、function_points、apis、classes、prototypes、dependencies、remarks。
-  兼容别名：interfaces。
-
-- **get_current_draft()**：读取当前对话已有的文档草稿（修改场景必须先调用）。
-
-- **list_saved_documents(doc_type?)**：列出历史已保存文档的元数据清单（不含正文）。
-
-- **load_saved_document(doc_type, doc_name)**：加载历史保存文档的最新版本，注入写作上下文。
-
-- **write_document(skill_id, module_name, context, user_intent)**：生成或修改文档正文，流式输出给用户。
-  调用此工具完成写作；未调用此工具时不得声称"已完成"。
-
-- **ask_user(question)**：向用户提问，用于执行层面的澄清（如写作对象有歧义、版本选择、细节超出事实库范围）。
-
-### 写作约束
-
-1. 所有文档内容必须基于项目事实，不得虚构。
-2. 若【上下文信息】或 `get_current_draft()` 已明确给出“当前文档目标”，且用户没有明确要求切换到别的模块/文档，则默认本轮是在继续修改该文档，不要把它当成新的模块定位任务。
-3. 先用事实工具完成最小检索闭环，再决定是否 ask_user：
-   - 若当前对话已有草稿且本轮是修改请求，应先调用 `get_current_draft()` 加载草稿，并沿用该草稿对应的模块/文档目标；
-   - 只有在没有可沿用的当前文档目标、且本轮确实是新的模块级写作任务时，才调用 `resolve_target_module` 定位目标模块；
-   - 若返回唯一模块，优先调用 `load_module_fact_sheet` 加载模块事实主档；
-   - 若返回多个候选模块或未找到，不要继续猜测，不要先加载某个候选模块详情，应立即调用 `ask_user` 请用户明确目标模块；
-   - 只有当用户要求列清单、看范围或目标对象本身不是模块时，才优先调用 `get_fact_overview`；
-   - 当前阶段不要再为同一模块重复调用 `get_fact_detail(description/usecases/function_points/apis/prototypes/dependencies/remarks)`；模块事实主档已是模块级完整事实正文；
-   - 仅当未来存在主档未覆盖的资源型事实入口，或用户明确要求额外专项资源时，才按需调用 `get_fact_detail`；
-   - 只有在完成上述检索后，仍然无法确定写作对象，或用户明确要求的关键信息完全不存在时，才调用 ask_user。
-4. 若事实不足以支撑完整写作，优先基于已有事实继续生成，并把缺口写成“待确认”或“待补充”；
-   不要因为缺少原型、截图、页面文案就立刻 ask_user。
-5. 草稿来源决策——结合当前保存状态和用户意图判断：
-   - **有正式保存版本**（调用 list_saved_documents 能查到对应类型的文档）：
-     修改意图默认以最新保存版本为基础，调用 load_saved_document 加载后再修改；
-   - **只有未保存草稿**（list_saved_documents 无结果，但 get_current_draft 有内容）：
-     修改意图以上一轮对话草稿为基础，调用 get_current_draft 加载后再修改，并把该草稿的模块/文档目标视为本轮唯一写作对象；
-   - **用户明确指定来源**（如"基于上次保存的 v1"、"用刚才写的草稿"）：按用户指定处理；
-   - **均无草稿**：新建场景，无需询问。
-6. 写作完成后，最终响应只输出“本轮写作完成总结”，不得再次输出或改写文档正文。
-   最终响应建议包含：
-   - 事实来源说明
-   - 质量检查结论
-   - 建议（如有）
-   最终响应应简洁，聚焦执行过程与结果质量，不要重复正文内容。
-7. 若需要向用户补充确认信息，必须调用 ask_user(question)。
-   禁止在推理文本、过程说明、最终响应或正文中直接输出“请问…”、“为了准确编写…”、“我需要了解…”等提问内容。
-   所有面向用户的澄清问题都必须通过 ask_user 发出。
-
-所有输出使用中文。
-"""
-
-
 def _extract_text_from_event(event) -> str:
     if not event.content:
         return ""
@@ -170,6 +93,35 @@ def _normalize_reflection_text(text: str) -> str:
     cleaned = (text or "").strip()
     cleaned = re.sub(r"^\s*(?:#+\s*)?(?:执行摘要|完成总结)\s*\n+", "", cleaned)
     return cleaned.strip()
+
+
+def _merge_subagent_state_into_parent(
+    parent_ctx: "ConversationContext",
+    tool_state: dict,
+    subagent_state: dict,
+    fallback_skill_id: str,
+) -> bool:
+    """Promote sub-agent writing state into the parent orchestrator context."""
+    draft_content = subagent_state.get("draft_content")
+    if not draft_content:
+        return False
+
+    tool_state["draft_content"] = draft_content
+    tool_state["selected_skill_id"] = subagent_state.get(
+        "selected_skill_id", fallback_skill_id
+    )
+
+    if subagent_state.get("doc_type"):
+        tool_state["doc_type"] = subagent_state["doc_type"]
+    if subagent_state.get("module_name"):
+        tool_state["module_name"] = subagent_state["module_name"]
+        parent_ctx.current_module_name = subagent_state["module_name"]
+    if subagent_state.get("module_id"):
+        tool_state["module_id"] = subagent_state["module_id"]
+        parent_ctx.current_module_id = subagent_state["module_id"]
+
+    parent_ctx.draft_updated = True
+    return True
 
 
 async def _generate_context_summary(
@@ -226,137 +178,43 @@ def _read_skill_body(skill: "SkillInfo") -> str:
     return content.strip()
 
 
-async def _extract_and_load_skill_tools(skill_body: str, skill_dir: str) -> list:
-    """从 skill.md 正文中通过 LLM 提取专属工具文件路径，加载并返回工具函数列表。
-
-    Args:
-        skill_body: skill.md 的正文内容（不含 frontmatter）。
-        skill_dir: skill 目录的绝对路径。
-
-    Returns:
-        工具函数列表。若 skill.md 中未声明工具，返回空列表。
-    """
-    import litellm
-    from agent.adk.llm_adapter import get_litellm_model_config
-
-    llm_config = get_litellm_model_config()
-    if llm_config is None:
-        logger.warning("_extract_and_load_skill_tools: 无 LLM 配置，跳过工具提取")
-        return []
-
-    prompt = (
-        "从以下 skill.md 正文中提取所有专属工具文件的相对路径（相对于 skill 目录）。\n"
-        "只返回路径列表，每行一个路径，不包含任何说明文字。\n"
-        "如果没有声明任何工具文件，返回空字符串。\n\n"
-        f"skill.md 正文：\n{skill_body}\n\n"
-        "工具文件路径列表（每行一个，例如：tools/my_tool.py）："
-    )
-
-    try:
-        response = await litellm.acompletion(
-            model=llm_config.model,
-            api_key=llm_config.api_key,
-            api_base=llm_config.api_base,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-            max_tokens=200,
-        )
-        raw = response.choices[0].message.content.strip()
-    except Exception as e:
-        logger.warning(f"_extract_and_load_skill_tools: LLM 提取失败: {e}")
-        return []
-
-    if not raw:
-        return []
-
-    paths = [
-        line.strip()
-        for line in raw.splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
-
-    tool_functions = []
-    for rel_path in paths:
-        abs_path = os.path.join(skill_dir, rel_path)
-        if not os.path.isfile(abs_path):
-            logger.warning(f"_extract_and_load_skill_tools: 工具文件不存在: {abs_path}")
-            continue
-
-        try:
-            module_name = os.path.splitext(os.path.basename(abs_path))[0]
-            spec = importlib.util.spec_from_file_location(
-                f"skill_tool_{module_name}", abs_path
-            )
-            if spec is None or spec.loader is None:
-                logger.warning(f"_extract_and_load_skill_tools: 无法加载模块: {abs_path}")
-                continue
-
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            tool_fn = getattr(module, module_name, None)
-            if callable(tool_fn):
-                tool_functions.append(tool_fn)
-                logger.info(
-                    f"_extract_and_load_skill_tools: 加载工具 {module_name} from {abs_path}"
-                )
-            else:
-                logger.warning(
-                    f"_extract_and_load_skill_tools: 模块 {module_name} 未暴露同名可调用函数"
-                )
-        except Exception as e:
-            logger.warning(
-                f"_extract_and_load_skill_tools: 加载工具模块失败 {abs_path}: {e}"
-            )
-
-    return tool_functions
-
-
 def _build_skill_subagent(
     skill: "SkillInfo",
     ctx: "ConversationContext",
     llm_config,
-    skill_specific_tools: list,
 ) -> LlmAgent:
     """创建 Skill Sub-agent（LlmAgent）。
 
     instruction = skill.md 正文 + 固定执行规范
-    工具列表 = 通用工具集 + Skill 专属工具
+    工具列表 = 通用工具集 + 当前 Skill 绑定的内部 `skill.*` 工具
 
     Args:
         skill: SkillInfo 实例。
         ctx: 当前对话上下文（与主 Agent 共享）。
         llm_config: LiteLLM 模型配置。
-        skill_specific_tools: 已加载的 Skill 专属工具函数列表。
-
     Returns:
         LlmAgent 实例。
     """
-    from agent.adk.fact_tools import create_fact_tools
-    from agent.adk.write_document_tool import create_write_document_tool
-    from agent.adk.draft_tool import create_get_current_draft_tool
-    from agent.adk.ask_user_tool import create_ask_user_tool
-    from agent.adk.saved_doc_tools import create_saved_doc_tools
+    from agent.adk.prompt_loader import load_prompt_template
+    from agent.adk.thought_tool import create_thought_tool, should_enable_thought_tool
+    from agent.adk.tool_catalog import (
+        build_skill_subagent_tool_view,
+        render_tool_section,
+    )
 
     skill_body = _read_skill_body(skill)
-    instruction = skill_body + _SUBAGENT_EXECUTION_SPEC
-
-    # 通用工具集（与主 Agent 共享同一 ctx）
-    resolve_target_module_fn, load_module_fact_sheet_fn, get_fact_overview_fn, get_fact_detail_fn = create_fact_tools(ctx)
-    list_saved_documents_fn, load_saved_document_fn = create_saved_doc_tools(ctx)
     skills_map = {skill.id: skill}
-
-    tools: List = [
-        create_get_current_draft_tool(ctx),
-        list_saved_documents_fn,
-        load_saved_document_fn,
-        resolve_target_module_fn,
-        load_module_fact_sheet_fn,
-        get_fact_overview_fn,
-        get_fact_detail_fn,
-        create_write_document_tool(ctx, skills_map),
-        create_ask_user_tool(ctx),
-    ] + skill_specific_tools
+    tool_view = build_skill_subagent_tool_view(ctx, skill, skills_map)
+    tool_section = render_tool_section(tool_view, "### 可用通用工具")
+    instruction = skill_body + "\n\n" + load_prompt_template(
+        "subagent_execution.md",
+        slots={
+            "tool_section": tool_section,
+        },
+    )
+    tools: List = list(tool_view.tools)
+    if should_enable_thought_tool(llm_config):
+        tools.append(create_thought_tool())
 
     agent = LlmAgent(
         name=f"doc_worker_{skill.id.replace('-', '_')}",
@@ -370,7 +228,8 @@ def _build_skill_subagent(
     )
 
     logger.info(
-        f"_build_skill_subagent: 创建 Sub-agent skill_id={skill.id}, 工具数={len(tools)}"
+        f"_build_skill_subagent: 创建 Sub-agent skill_id={skill.id}, "
+        f"工具数={len(tools)}, tool_ids={list(tool_view.tool_ids)}"
     )
     return agent
 
@@ -416,6 +275,10 @@ def _build_subagent_input(user_intent: str, ctx: "ConversationContext") -> str:
         context_hints.append(
             f"上次写作执行摘要：{ctx.last_skill_execution_summary}"
         )
+    if ctx.clarification_context:
+        context_hints.append(
+            "已有澄清结论：\n" + "\n".join(ctx.clarification_context[-3:])
+        )
 
     if context_hints:
         parts.append("【上下文信息】\n" + "\n".join(context_hints))
@@ -423,6 +286,39 @@ def _build_subagent_input(user_intent: str, ctx: "ConversationContext") -> str:
     parts.append(f"【写作任务】\n{user_intent}")
 
     return "\n\n".join(parts)
+
+
+def _build_subagent_context(parent_ctx: "ConversationContext") -> "ConversationContext":
+    """Create an isolated sub-agent context from the parent's minimal handoff.
+
+    The sub-agent keeps its own working context for MCP-loaded facts / docs /
+    skill resources. Only stable handoff signals are copied from the parent.
+    """
+    from agent.adk.runner_adapter import ConversationContext
+
+    return ConversationContext(
+        conversation_id=parent_ctx.conversation_id,
+        ws_sender=parent_ctx.ws_sender,
+        conversation_manager=parent_ctx.conversation_manager,
+        orchestrator_execution_id=parent_ctx.orchestrator_execution_id,
+        conversation_has_draft=parent_ctx.conversation_has_draft,
+        last_skill_execution_summary=parent_ctx.last_skill_execution_summary,
+        loaded_base_doc_name=parent_ctx.loaded_base_doc_name,
+        loaded_base_module_id=parent_ctx.loaded_base_module_id,
+        current_module_id=parent_ctx.current_module_id,
+        current_module_name=parent_ctx.current_module_name,
+        current_system_name=parent_ctx.current_system_name,
+        current_subsystem_name=parent_ctx.current_subsystem_name,
+        user_input_queue=parent_ctx.user_input_queue,
+        execution_events=parent_ctx.execution_events,
+        execution_nodes=parent_ctx.execution_nodes,
+        execution_node_index=parent_ctx.execution_node_index,
+        execution_node_order=parent_ctx.execution_node_order,
+        open_tool_nodes=parent_ctx.open_tool_nodes,
+        current_skill_node_id=parent_ctx.current_skill_node_id,
+        current_question_node_id=parent_ctx.current_question_node_id,
+        clarification_context=parent_ctx.clarification_context,
+    )
 
 
 # ── 工厂函数（注册到主 Agent）─────────────────────────────────────────────────
@@ -458,6 +354,25 @@ def create_execute_skill_tool(ctx: "ConversationContext", skills_map: dict):
             执行摘要，描述本次写作完成情况（加载了哪些事实、生成了多少字等）。
         """
         from agent.adk.llm_adapter import get_litellm_model_config
+        from agent.adk.runner_adapter import (
+            append_thought,
+            close_active_thought,
+            create_execution_node,
+            create_system_state_node,
+            start_tool_node,
+            update_execution_node,
+            emit_execution_event,
+        )
+        from agent.models import (
+            ExecutionActor,
+            ExecutionEventStatus,
+            ExecutionNodeType,
+            ExecutionPhase,
+            ExecutionNodeStatus,
+            SkillExecutionFailure,
+            SkillExecutionResult,
+            SkillExecutionStatus,
+        )
 
         if skill_id not in skills_map:
             return f"错误：未找到 Skill '{skill_id}'，请检查 skill_id 是否正确。"
@@ -467,19 +382,36 @@ def create_execute_skill_tool(ctx: "ConversationContext", skills_map: dict):
         if llm_config is None:
             return "错误：未配置 LLM 模型，无法执行 Skill。"
 
-        # 加载 Skill 专属工具
-        skill_dir = (
-            os.path.dirname(skill.skill_md_path) if skill.skill_md_path else ""
-        )
-        skill_body = _read_skill_body(skill)
-        skill_specific_tools = []
-        if skill_dir:
-            skill_specific_tools = await _extract_and_load_skill_tools(
-                skill_body, skill_dir
+        # 创建 Sub-agent，并为其分配独立 working context。
+        # 主 Agent 只传递最小 handoff 信息，不直接共享完整资源上下文。
+        execution_id = f"skill-{uuid.uuid4().hex}"
+        sub_ctx = _build_subagent_context(ctx)
+        sub_ctx.current_execution_id = execution_id
+        subagent = _build_skill_subagent(skill, sub_ctx, llm_config)
+        if ctx.current_skill_node_id:
+            await update_execution_node(
+                ctx,
+                ctx.current_skill_node_id,
+                status=ExecutionNodeStatus.RUNNING,
+                title=skill.name,
+                detail_text=f"Skill：{skill.name}",
+                metadata_updates={"execution_id": execution_id},
             )
-
-        # 创建 Sub-agent
-        subagent = _build_skill_subagent(skill, ctx, llm_config, skill_specific_tools)
+        await emit_execution_event(
+            ctx,
+            execution_id=execution_id,
+            parent_execution_id=ctx.orchestrator_execution_id,
+            actor=ExecutionActor.ORCHESTRATOR,
+            phase=ExecutionPhase.DELEGATE,
+            name="skill_dispatch",
+            status=ExecutionEventStatus.STARTED,
+            display_text=f"已委派给子 Agent：{skill.name}",
+            data={
+                "skill_id": skill_id,
+                "node_id": ctx.current_skill_node_id,
+                "parent_node_id": None,
+            },
+        )
 
         # Sub-agent 使用独立 session（与主 Agent 隔离）
         subagent_session_service = InMemorySessionService()
@@ -499,7 +431,7 @@ def create_execute_skill_tool(ctx: "ConversationContext", skills_map: dict):
         )
 
         # 构造 Sub-agent 初始输入（注入 ctx 状态摘要）
-        initial_input = _build_subagent_input(user_intent, ctx)
+        initial_input = _build_subagent_input(user_intent, sub_ctx)
         start_message = types.Content(
             role="user",
             parts=[types.Part(text=initial_input)],
@@ -507,15 +439,19 @@ def create_execute_skill_tool(ctx: "ConversationContext", skills_map: dict):
 
         # Sub-agent 工具调用的前端显示文本
         _SUBAGENT_TOOL_DISPLAY = {
-            "resolve_target_module": "定位目标模块",
-            "load_module_fact_sheet": "加载模块事实主档",
-            "get_fact_overview":    "加载项目概览",
-            "get_fact_detail":      "加载事实详情",
+            "facts_list_modules":   "加载模块清单",
+            "facts_get_module":     "加载模块事实主档",
+            "prototypes_list_pages": "加载原型页面清单",
+            "prototypes_get_page":   "加载原型页面详情",
             "get_current_draft":    "加载已有草稿",
-            "list_saved_documents": "查询历史文档",
-            "load_saved_document":  "加载历史版本",
+            "docs_list_saved":      "查询历史文档",
+            "docs_load_saved":      "加载历史版本",
+            "skill_list_resources": "列出 Skill 资源",
+            "skill_read_resource":  "读取 Skill 资源",
+            "skill_run_script":     "执行 Skill 脚本",
             "write_document":       "生成文档内容",
             "ask_user":             "向用户确认",
+            "thought":              "兼容本地模型误调用",
         }
 
         # 通知前端 Sub-agent 开始执行（显示在可观测面板）
@@ -524,10 +460,20 @@ def create_execute_skill_tool(ctx: "ConversationContext", skills_map: dict):
             "skill_id": skill_id,
             "skill_name": skill.name,
         })
+        await emit_execution_event(
+            ctx,
+            execution_id=execution_id,
+            parent_execution_id=ctx.orchestrator_execution_id,
+            actor=ExecutionActor.SUBAGENT,
+            phase=ExecutionPhase.DELEGATE,
+            name="skill_started",
+            status=ExecutionEventStatus.STARTED,
+            display_text=f"子 Agent 开始执行：{skill.name}",
+            data={"skill_id": skill_id, "skill_name": skill.name},
+        )
 
         # 运行 Sub-agent，将执行步骤实时转发给前端（可观测面板）
         reflection_buffer = ""
-        reflection_started = False
         try:
             async for event in subagent_runner.run_async(
                 user_id=subagent_user_id,
@@ -547,10 +493,41 @@ def create_execute_skill_tool(ctx: "ConversationContext", skills_map: dict):
 
                 # Sub-agent 工具调用 → 转发为 status 事件（显示在可观测面板）
                 if func_calls:
+                    await close_active_thought(sub_ctx, status=ExecutionNodeStatus.COMPLETED)
                     for fc in func_calls:
                         tool_name = fc.name
                         label = _SUBAGENT_TOOL_DISPLAY.get(tool_name, f"调用：{tool_name}")
                         logger.info(f"subagent tool_call: {tool_name}")
+                        phase = ExecutionPhase.RESOURCE
+                        if tool_name == "write_document":
+                            phase = ExecutionPhase.WRITE
+                        elif tool_name == "ask_user":
+                            phase = ExecutionPhase.CLARIFICATION
+                        tool_node = await start_tool_node(
+                            sub_ctx,
+                            execution_id=execution_id,
+                            actor=ExecutionActor.SUBAGENT,
+                            tool_name=tool_name,
+                            title=label,
+                            params=fc.args or {},
+                            parent_node_id=sub_ctx.current_skill_node_id,
+                            skill_id=skill_id,
+                        )
+                        await emit_execution_event(
+                            ctx,
+                            execution_id=execution_id,
+                            parent_execution_id=ctx.orchestrator_execution_id,
+                            actor=ExecutionActor.SUBAGENT,
+                            phase=phase,
+                            name=tool_name,
+                            status=ExecutionEventStatus.STARTED,
+                            display_text=label,
+                            data={
+                                "tool": tool_name,
+                                "node_id": tool_node.node_id,
+                                "parent_node_id": sub_ctx.current_skill_node_id,
+                            },
+                        )
                         await ctx.ws_sender({
                             "type": "status",
                             "sub": "tool_call",
@@ -566,48 +543,28 @@ def create_execute_skill_tool(ctx: "ConversationContext", skills_map: dict):
                     event_text = _extract_text_from_event(event)
                     if not event_text.strip():
                         continue
-                    if ctx.draft_updated:
-                        delta, reflection_buffer = _compute_stream_delta(
+                    if sub_ctx.draft_updated:
+                        _delta, reflection_buffer = _compute_stream_delta(
                             reflection_buffer,
                             event_text,
                         )
-                        if delta.strip():
-                            if not reflection_started:
-                                reflection_started = True
-                                await ctx.ws_sender({
-                                    "type": "status",
-                                    "sub": "tool_call",
-                                    "tool": "write_reflection",
-                                    "content": "写作完成总结",
-                                })
-                            await ctx.ws_sender({
-                                "type": "reflection",
-                                "content": delta,
-                            })
                     else:
+                        await append_thought(
+                            sub_ctx,
+                            content=event_text,
+                            actor=ExecutionActor.SUBAGENT,
+                            parent_node_id=sub_ctx.current_skill_node_id,
+                        )
                         await ctx.ws_sender({"type": "thinking", "content": event_text})
 
                 # 捕获 Sub-agent 最终响应文本（写作完成总结）
                 if event.is_final_response() and event.content:
                     final_text = _extract_text_from_event(event)
-                    if ctx.draft_updated and final_text.strip():
-                        delta, reflection_buffer = _compute_stream_delta(
+                    if sub_ctx.draft_updated and final_text.strip():
+                        _delta, reflection_buffer = _compute_stream_delta(
                             reflection_buffer,
                             final_text,
                         )
-                        if delta.strip():
-                            if not reflection_started:
-                                reflection_started = True
-                                await ctx.ws_sender({
-                                    "type": "status",
-                                    "sub": "tool_call",
-                                    "tool": "write_reflection",
-                                    "content": "写作完成总结",
-                                })
-                            await ctx.ws_sender({
-                                "type": "reflection",
-                                "content": delta,
-                            })
                     else:
                         reflection_buffer = final_text
 
@@ -616,6 +573,55 @@ def create_execute_skill_tool(ctx: "ConversationContext", skills_map: dict):
                 f"execute_skill: Sub-agent 运行出错 skill_id={skill_id}: {e}",
                 exc_info=True,
             )
+            failure = SkillExecutionFailure(
+                type="subagent_runtime_error",
+                message=str(e),
+                stage="subagent_run",
+            )
+            ctx.latest_skill_execution_result = SkillExecutionResult(
+                execution_id=execution_id,
+                skill_id=skill_id,
+                status=SkillExecutionStatus.FAILED,
+                summary=f"Skill 执行出错：{str(e)}",
+                failure=failure,
+                retryable=True,
+            )
+            tool_context.state["latest_skill_execution_result"] = (
+                ctx.latest_skill_execution_result.model_dump(mode="json")
+            )
+            await emit_execution_event(
+                ctx,
+                execution_id=execution_id,
+                parent_execution_id=ctx.orchestrator_execution_id,
+                actor=ExecutionActor.SUBAGENT,
+                phase=ExecutionPhase.COMPLETE,
+                name="skill_failed",
+                status=ExecutionEventStatus.FAILED,
+                display_text=f"子 Agent 执行失败：{str(e)}",
+                data={
+                    "skill_id": skill_id,
+                    "error": str(e),
+                    "node_id": ctx.current_skill_node_id,
+                    "parent_node_id": None,
+                },
+            )
+            if ctx.current_skill_node_id:
+                await update_execution_node(
+                    ctx,
+                    ctx.current_skill_node_id,
+                    status=ExecutionNodeStatus.FAILED,
+                    output_preview=f"Skill 执行失败：{str(e)}",
+                    output_detail=str(e),
+                )
+            await create_system_state_node(
+                ctx,
+                title=f"Skill 执行失败：{skill.name}",
+                status=ExecutionNodeStatus.FAILED,
+                actor=ExecutionActor.SUBAGENT,
+                parent_node_id=ctx.current_skill_node_id,
+                metadata={"skill_id": skill_id},
+            )
+            ctx.current_skill_node_id = None
             return f"Skill 执行出错：{str(e)}"
 
         # 将 Sub-agent 写入的写作产物转移到主 Agent session.state
@@ -627,19 +633,12 @@ def create_execute_skill_tool(ctx: "ConversationContext", skills_map: dict):
                 user_id=subagent_user_id,
                 session_id=subagent_session_id,
             )
-            if subagent_session and subagent_session.state.get("draft_content"):
-                tool_context.state["draft_content"] = subagent_session.state[
-                    "draft_content"
-                ]
-                tool_context.state["selected_skill_id"] = subagent_session.state.get(
-                    "selected_skill_id", skill_id
-                )
-                if subagent_session.state.get("doc_type"):
-                    tool_context.state["doc_type"] = subagent_session.state["doc_type"]
-                if subagent_session.state.get("module_name"):
-                    tool_context.state["module_name"] = subagent_session.state[
-                        "module_name"
-                    ]
+            if subagent_session and _merge_subagent_state_into_parent(
+                ctx,
+                tool_context.state,
+                subagent_session.state,
+                skill_id,
+            ):
                 logger.info(
                     f"execute_skill: 已将写作产物从 Sub-agent 转移到主 Agent session.state"
                     f" (skill_id={skill_id}, "
@@ -674,12 +673,87 @@ def create_execute_skill_tool(ctx: "ConversationContext", skills_map: dict):
                         "type": "summary",
                         "content": compact_summary,
                     })
+                    await create_execution_node(
+                        ctx,
+                        node_type=ExecutionNodeType.SYSTEM_STATE,
+                        title="写作摘要",
+                        status=ExecutionNodeStatus.COMPLETED,
+                        actor=ExecutionActor.SUBAGENT,
+                        parent_node_id=ctx.current_skill_node_id,
+                        output_preview="写作摘要已生成",
+                        output_detail=compact_summary,
+                        detail_text=compact_summary,
+                        metadata={"skill_id": skill_id, "kind": "summary"},
+                    )
+                else:
+                    await create_execution_node(
+                        ctx,
+                        node_type=ExecutionNodeType.SYSTEM_STATE,
+                        title="写作摘要",
+                        status=ExecutionNodeStatus.COMPLETED,
+                        actor=ExecutionActor.SUBAGENT,
+                        parent_node_id=ctx.current_skill_node_id,
+                        output_preview="未生成额外写作摘要",
+                        output_detail="",
+                        detail_text="",
+                        metadata={"skill_id": skill_id, "kind": "summary"},
+                    )
         except Exception as e:
             logger.warning(f"execute_skill: 生成压缩摘要失败 skill_id={skill_id}: {e}")
+            await create_execution_node(
+                ctx,
+                node_type=ExecutionNodeType.SYSTEM_STATE,
+                title="写作摘要",
+                status=ExecutionNodeStatus.FAILED,
+                actor=ExecutionActor.SUBAGENT,
+                parent_node_id=ctx.current_skill_node_id,
+                output_preview="写作摘要生成失败",
+                output_detail=str(e),
+                detail_text=str(e),
+                metadata={"skill_id": skill_id, "kind": "summary"},
+            )
 
         # 将压缩摘要写入 ctx，供后续轮次的 Sub-agent / 主 Agent 参考
         summary = compact_summary.strip() or reflection_text or f"Skill {skill_id} 执行完成"
         ctx.last_skill_execution_summary = summary
+        ctx.latest_skill_execution_result = SkillExecutionResult(
+            execution_id=execution_id,
+            skill_id=skill_id,
+            status=SkillExecutionStatus.COMPLETED,
+            summary=summary,
+            retryable=False,
+        )
+        tool_context.state["latest_skill_execution_result"] = (
+            ctx.latest_skill_execution_result.model_dump(mode="json")
+        )
+        await emit_execution_event(
+            ctx,
+            execution_id=execution_id,
+            parent_execution_id=ctx.orchestrator_execution_id,
+            actor=ExecutionActor.SUBAGENT,
+            phase=ExecutionPhase.COMPLETE,
+            name="skill_completed",
+            status=ExecutionEventStatus.COMPLETED,
+            display_text=f"子 Agent 执行完成：{skill.name}",
+            data={
+                "skill_id": skill_id,
+                "draft_updated": sub_ctx.draft_updated,
+                "node_id": ctx.current_skill_node_id,
+                "parent_node_id": None,
+            },
+        )
+        if ctx.current_skill_node_id:
+            await update_execution_node(
+                ctx,
+                ctx.current_skill_node_id,
+                status=ExecutionNodeStatus.COMPLETED,
+                output_preview=f"Skill 执行完成：{skill.name}",
+                output_detail=summary,
+                metadata_updates={"draft_updated": sub_ctx.draft_updated},
+            )
+        sub_ctx.execution_node_order = max(sub_ctx.execution_node_order, ctx.execution_node_order)
+        ctx.execution_node_order = sub_ctx.execution_node_order
+        ctx.current_skill_node_id = None
 
         logger.info(
             f"execute_skill: 完成 skill_id={skill_id}, 摘要长度={len(summary)}"

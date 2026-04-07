@@ -1,0 +1,26 @@
+{
+  "page_id": "page-8c4f580d9c25",
+  "page_name": "reload",
+  "title": "reload",
+  "source_path": "prototypes/assets-system/resources/reload.html",
+  "relative_path": "assets-system/resources/reload.html",
+  "package_id": "assets-system",
+  "layout_sections": [],
+  "elements": {
+    "buttons": [],
+    "inputs": [],
+    "tables": [],
+    "tabs": [],
+    "dialogs": [],
+    "links": []
+  },
+  "visible_texts": [
+    "﻿"
+  ],
+  "messages": [],
+  "interactions": [],
+  "outgoing_links": [],
+  "evidence": [],
+  "parser_warnings": [],
+  "llm_summary": "页面“reload”，来源：assets-system/resources/reload.html。"
+}

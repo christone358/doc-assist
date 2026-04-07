@@ -20,6 +20,7 @@ export const conversations = {
   list:   ()           => req('GET',    '/conversations'),
   create: (body)       => req('POST',   '/conversations', body),
   get:    (id)         => req('GET',    `/conversations/${id}`),
+  autoName: (id)       => req('POST',   `/conversations/${id}/auto-name`),
   delete: (id)         => req('DELETE', `/conversations/${id}`),
 };
 

@@ -1,0 +1,13 @@
+{
+  "packages": [
+    {
+      "package_id": "assets-system",
+      "package_name": "assets-system",
+      "root_path": "prototypes/assets-system",
+      "entry_page": "index.html",
+      "fingerprint": "sha1:7169b333e90b2c0fbd18199aab443ecf18d8f0bf",
+      "page_count": 50,
+      "updated_at": "2026-04-02T17:18:36.828285Z"
+    }
+  ]
+}

@@ -63,6 +63,7 @@ stop_service() {
     local port=""
     [[ "$name" == "backend" ]]  && port="8000"
     [[ "$name" == "frontend" ]] && port="5173"
+    [[ "$name" == "mcp" ]]      && port="8765"
     if [[ -n "$port" ]]; then
         local stray
         stray=$(lsof -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null || true)
@@ -78,6 +79,7 @@ stop_service() {
 
 stop_service "backend"
 stop_service "frontend"
+stop_service "mcp"
 
 rmdir "$PIDS_DIR" 2>/dev/null || true
 

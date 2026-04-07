@@ -531,6 +531,8 @@ async def _run_agent_stream(
             "question",
             "thinking",
             "skill_start",
+            "execution_event",
+            "trace_node",
             "reflection",
             "summary",
         ):
@@ -641,6 +643,10 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 skill_invoked=skill_id,
                 documents_generated=documents,
                 llm_info=llm_info,
+                skill_execution=done_data.get("skill_execution") if done_data else None,
+                execution_events=done_data.get("execution_events") if done_data else None,
+                execution_nodes=done_data.get("execution_nodes") if done_data else None,
+                state_snapshot=done_data.get("state_snapshot") if done_data else None,
             )
 
             # Auto-name: generate semantic title on the first round (fire-and-forget)

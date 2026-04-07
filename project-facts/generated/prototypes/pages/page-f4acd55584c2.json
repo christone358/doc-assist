@@ -1,0 +1,30 @@
+{
+  "page_id": "page-f4acd55584c2",
+  "page_name": "Other",
+  "title": "Other",
+  "source_path": "prototypes/assets-system/resources/Other.html",
+  "relative_path": "assets-system/resources/Other.html",
+  "package_id": "assets-system",
+  "layout_sections": [],
+  "elements": {
+    "buttons": [
+      "Close"
+    ],
+    "inputs": [],
+    "tables": [],
+    "tabs": [],
+    "dialogs": [],
+    "links": []
+  },
+  "visible_texts": [
+    "Close"
+  ],
+  "messages": [],
+  "interactions": [],
+  "outgoing_links": [],
+  "evidence": [
+    "按钮: Close"
+  ],
+  "parser_warnings": [],
+  "llm_summary": "页面“Other”，来源：assets-system/resources/Other.html。\n关键控件：按钮：Close。"
+}

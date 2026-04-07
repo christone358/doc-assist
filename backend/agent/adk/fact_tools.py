@@ -536,6 +536,11 @@ def create_fact_tools(ctx: "ConversationContext") -> Tuple:
     Returns:
         (resolve_target_module_fn, load_module_fact_sheet_fn, get_fact_overview_fn, get_fact_detail_fn) 元组
     """
+    from agent.adk.runner_adapter import complete_tool_node
+    from agent.models import ExecutionNodeStatus
+
+    execution_id = ctx.current_execution_id or ctx.orchestrator_execution_id
+    parent_node_id = ctx.current_skill_node_id if ctx.current_execution_id else None
 
     async def resolve_target_module_fn(target_ref: str) -> str:
         """定位目标模块。
@@ -556,6 +561,19 @@ def create_fact_tools(ctx: "ConversationContext") -> Tuple:
             "outcome": _classify_module_resolution_result(result),
             "content": summary,
         })
+        await complete_tool_node(
+            ctx,
+            execution_id=execution_id,
+            tool_name="resolve_target_module",
+            parent_node_id=parent_node_id,
+            status=(
+                ExecutionNodeStatus.FAILED
+                if _classify_module_resolution_result(result) == "error"
+                else ExecutionNodeStatus.COMPLETED
+            ),
+            output_preview=summary,
+            output_detail=result,
+        )
         return result
 
     async def get_fact_overview_fn(category: Optional[str] = None) -> str:
@@ -586,6 +604,19 @@ def create_fact_tools(ctx: "ConversationContext") -> Tuple:
             "outcome": _classify_fact_result(result),
             "content": summary,
         })
+        await complete_tool_node(
+            ctx,
+            execution_id=execution_id,
+            tool_name="get_fact_overview",
+            parent_node_id=parent_node_id,
+            status=(
+                ExecutionNodeStatus.FAILED
+                if _classify_fact_result(result) == "error"
+                else ExecutionNodeStatus.COMPLETED
+            ),
+            output_preview=summary,
+            output_detail=result,
+        )
 
         # 向 ADK session 历史只返回摘要，不含原始全文，避免历史膨胀
         return summary
@@ -618,6 +649,19 @@ def create_fact_tools(ctx: "ConversationContext") -> Tuple:
             "outcome": _classify_fact_result(result),
             "content": summary,
         })
+        await complete_tool_node(
+            ctx,
+            execution_id=execution_id,
+            tool_name="load_module_fact_sheet",
+            parent_node_id=parent_node_id,
+            status=(
+                ExecutionNodeStatus.FAILED
+                if _classify_fact_result(result) == "error"
+                else ExecutionNodeStatus.COMPLETED
+            ),
+            output_preview=summary,
+            output_detail=result,
+        )
 
         return result
 
@@ -650,6 +694,19 @@ def create_fact_tools(ctx: "ConversationContext") -> Tuple:
             "outcome": _classify_fact_result(result),
             "content": summary,
         })
+        await complete_tool_node(
+            ctx,
+            execution_id=execution_id,
+            tool_name="get_fact_detail",
+            parent_node_id=parent_node_id,
+            status=(
+                ExecutionNodeStatus.FAILED
+                if _classify_fact_result(result) == "error"
+                else ExecutionNodeStatus.COMPLETED
+            ),
+            output_preview=summary,
+            output_detail=result,
+        )
 
         # 向 ADK session 历史只返回摘要，不含原始全文
         return summary

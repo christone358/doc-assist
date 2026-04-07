@@ -16,6 +16,9 @@ from agent.models import (
     ConversationStatus,
     DocumentOutputInfo,
     DocumentType,
+    ExecutionEvent,
+    ExecutionObjectNode,
+    SkillExecutionResult,
 )
 
 from datetime import datetime, timezone
@@ -119,6 +122,10 @@ class ConversationManager:
         skill_invoked: Optional[str] = None,
         documents_generated: Optional[List[DocumentOutputInfo]] = None,
         llm_info: Optional[dict] = None,
+        skill_execution: Optional[SkillExecutionResult] = None,
+        execution_events: Optional[List[ExecutionEvent]] = None,
+        execution_nodes: Optional[List[ExecutionObjectNode]] = None,
+        state_snapshot: Optional[dict] = None,
     ) -> bool:
         """Add a new round to the conversation."""
         conversation = await self.get_conversation(conversation_id)
@@ -135,6 +142,10 @@ class ConversationManager:
             skill_invoked=skill_invoked,
             documents_generated=documents_generated or [],
             llm_info=llm_info,
+            skill_execution=skill_execution,
+            execution_events=execution_events or [],
+            execution_nodes=execution_nodes or [],
+            state_snapshot=state_snapshot,
         )
 
         conversation.rounds.append(new_round)

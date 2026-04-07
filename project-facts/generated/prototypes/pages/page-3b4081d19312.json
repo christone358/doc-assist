@@ -1,0 +1,62 @@
+{
+  "page_id": "page-3b4081d19312",
+  "page_name": "safari",
+  "title": "Axure RP - Safari Local File Restrictions",
+  "source_path": "prototypes/assets-system/resources/chrome/safari.html",
+  "relative_path": "assets-system/resources/chrome/safari.html",
+  "package_id": "assets-system",
+  "layout_sections": [],
+  "elements": {
+    "buttons": [],
+    "inputs": [],
+    "tables": [],
+    "tabs": [],
+    "dialogs": [],
+    "links": [
+      "Axure Cloud",
+      "View in Safari",
+      "Learn more",
+      "support@axure.com"
+    ]
+  },
+  "visible_texts": [
+    "﻿",
+    "Safari Local File Restrictions",
+    "To view locally stored projects in Safari, you will need to",
+    "Disable Local File Restrictions",
+    ". Alternatively, you can upload your RP file to",
+    "Axure Cloud",
+    "or use a different browser. You can also Preview from Axure RP.",
+    "View local projects in Safari",
+    "1. Open",
+    "Safari → Preferences → Advanced",
+    "from the top menu, and check the option to",
+    "Show develop menu in menu bar",
+    "2. In the Develop menu, click",
+    "Develop → Disable Local File Restrictions",
+    "to un-select the menu option.",
+    "3. Click the button below",
+    "View in Safari",
+    "Need private or on-premises hosting?",
+    "Axure Cloud for Business gives you all of the features of Axure Cloud plus control of accounts and permissions. For hosting behind your firewall, check out Axure Cloud On-Premises.",
+    "Learn more",
+    "We're here to help",
+    "If you have any questions, please email us at",
+    "support@axure.com",
+    "."
+  ],
+  "messages": [],
+  "interactions": [
+    "点击【View in Safari】跳转到 ../../start.html"
+  ],
+  "outgoing_links": [
+    {
+      "label": "View in Safari",
+      "target_page_id": "page-b5c7513b3e58",
+      "target": "../../start.html"
+    }
+  ],
+  "evidence": [],
+  "parser_warnings": [],
+  "llm_summary": "页面“safari”（标题：Axure RP - Safari Local File Restrictions），来源：assets-system/resources/chrome/safari.html。\n主要交互：点击【View in Safari】跳转到 ../../start.html。"
+}

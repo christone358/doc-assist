@@ -28,6 +28,83 @@ class ConversationStatus(str, Enum):
     COMPLETED = "completed"
 
 
+class SkillExecutionStatus(str, Enum):
+    COMPLETED = "completed"
+    NEEDS_CLARIFICATION = "needs_clarification"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class ExecutionEventStatus(str, Enum):
+    STARTED = "started"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class ExecutionActor(str, Enum):
+    ORCHESTRATOR = "orchestrator"
+    SUBAGENT = "subagent"
+    RUNTIME = "runtime"
+    USER = "user"
+
+
+class ExecutionPhase(str, Enum):
+    PLAN = "plan"
+    DELEGATE = "delegate"
+    RESOURCE = "resource"
+    CLARIFICATION = "clarification"
+    WRITE = "write"
+    COMPLETE = "complete"
+
+
+class ExecutionNodeType(str, Enum):
+    LLM_THOUGHT = "llm_thought"
+    TOOL_CALL = "tool_call"
+    SKILL_CALL = "skill_call"
+    USER_QUESTION = "user_question"
+    SYSTEM_STATE = "system_state"
+
+
+class ExecutionNodeStatus(str, Enum):
+    RUNNING = "running"
+    WAITING = "waiting"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class ToolSourceType(str, Enum):
+    MCP = "mcp"
+    BUILTIN = "builtin"
+    INTERNAL = "internal"
+
+
+class ExecutionObjectNode(BaseModel):
+    """Structured execution object node for the right-side observability panel."""
+
+    node_id: str
+    node_type: ExecutionNodeType
+    title: str
+    status: ExecutionNodeStatus
+    actor: ExecutionActor
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_order: int = 0
+    parent_node_id: Optional[str] = None
+    execution_id: Optional[str] = None
+    tool_name: Optional[str] = None
+    tool_source: Optional[ToolSourceType] = None
+    skill_id: Optional[str] = None
+    skill_name: Optional[str] = None
+    reason: Optional[str] = None
+    display_input: str = ""
+    output_preview: str = ""
+    output_detail: str = ""
+    detail_text: str = ""
+    is_truncated: bool = False
+    truncated_fields: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 # =============================================================================
 # Request Models
 # =============================================================================
@@ -133,16 +210,47 @@ class DocumentOutputInfo(BaseModel):
     file_size_bytes: Optional[int] = None
 
 
+class SkillExecutionFailure(BaseModel):
+    """Structured failure signal returned from a sub-agent execution."""
+    type: str
+    message: str
+    stage: str
+    details: Optional[Dict[str, Any]] = None
+
+
+class SkillExecutionResult(BaseModel):
+    """Minimal structured execution result returned to the orchestrator."""
+    execution_id: str
+    skill_id: str
+    status: SkillExecutionStatus
+    summary: str
+    failure: Optional[SkillExecutionFailure] = None
+    retryable: bool = False
+
+
+class ExecutionEvent(BaseModel):
+    """Structured execution-chain event for UI/logging."""
+    execution_id: str
+    actor: ExecutionActor
+    phase: ExecutionPhase
+    name: str
+    status: ExecutionEventStatus
+    display_text: str
+    parent_execution_id: Optional[str] = None
+    data: Dict[str, Any] = Field(default_factory=dict)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class ChatResponse(BaseModel):
     """Response to a chat message."""
     conversation_id: str
     message: str                              # Agent response text
     role: MessageRole = MessageRole.ASSISTANT
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    documents_generated: List[DocumentOutputInfo] = []
+    documents_generated: List[DocumentOutputInfo] = Field(default_factory=list)
     skill_invoked: Optional[str] = None
     requires_clarification: bool = False
-    clarification_options: List[str] = []
+    clarification_options: List[str] = Field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
 
 
@@ -153,8 +261,12 @@ class ConversationRound(BaseModel):
     user_input: str
     agent_response: str
     skill_invoked: Optional[str] = None
-    documents_generated: List[DocumentOutputInfo] = []
+    documents_generated: List[DocumentOutputInfo] = Field(default_factory=list)
     llm_info: Optional[Dict[str, Any]] = None
+    skill_execution: Optional[SkillExecutionResult] = None
+    execution_events: List[ExecutionEvent] = Field(default_factory=list)
+    execution_nodes: List[ExecutionObjectNode] = Field(default_factory=list)
+    state_snapshot: Optional[Dict[str, Any]] = None
 
 
 class WritingState(BaseModel):
@@ -177,8 +289,8 @@ class ConversationInfo(BaseModel):
     document_type: Optional[DocumentType] = None
     created_at: datetime
     updated_at: datetime
-    rounds: List[ConversationRound] = []
-    documents: List[DocumentOutputInfo] = []
+    rounds: List[ConversationRound] = Field(default_factory=list)
+    documents: List[DocumentOutputInfo] = Field(default_factory=list)
     writing_state: Optional[WritingState] = None
 
 

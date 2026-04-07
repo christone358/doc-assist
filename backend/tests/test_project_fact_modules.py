@@ -98,8 +98,8 @@ def test_ensure_generated_views_creates_indexes_and_matches_prototype_pages(tmp_
     generated = ensure_generated_views(facts_root)
 
     pages = generated["page_index"]["pages"]
-    assert {"name": "云主机列表页", "path": "axure-export/云主机列表页.html"} in pages
-    assert {"name": "云主机详情页", "path": "axure-export/云主机详情页.html"} in pages
+    assert any(page["name"] == "云主机列表页" and page["path"] == "axure-export/云主机列表页.html" for page in pages)
+    assert any(page["name"] == "云主机详情页" and page["path"] == "axure-export/云主机详情页.html" for page in pages)
 
     repo = ModuleArchiveRepository(facts_root)
     module = repo.get_module(repo.archives[0].module_id)

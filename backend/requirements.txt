@@ -18,6 +18,7 @@ aiofiles>=23.2.0
 # ADK Agent Framework
 google-adk>=1.0.0
 litellm>=1.40.0
+mcp>=1.2.0
 
 # Development / Testing
 pytest>=8.0.0

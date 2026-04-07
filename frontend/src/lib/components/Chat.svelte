@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy, tick } from 'svelte';
   import { marked } from 'marked';
-  import { activeConvId, messages, streaming, wsConn, notify, triggerConvRefresh, obsStore } from '$lib/stores.js';
+  import { activeConvId, messages, streaming, wsConn, notify, triggerConvRefresh, obsStore, updateConversationSummary } from '$lib/stores.js';
   import { conversations, openChatSocket } from '$lib/api.js';
   import ObservabilityPanel from '$lib/components/ObservabilityPanel.svelte';
 
@@ -64,24 +64,14 @@
     ws?.close();
     const conv = await conversations.get(id);
     if (_currentConvId !== id) return;
-    const msgs = (conv.rounds || []).flatMap(r => [
-      { role: 'user', content: r.user_input, ts: r.timestamp },
-      {
-        role: 'assistant',
-        content: r.agent_response,
-        docs: r.documents_generated,
-        ts: r.timestamp,
-        metaSkillId: r.skill_invoked || null,
-        metaSkillName: r.skill_invoked || null,
-        metaSkillReason: r.llm_info?.skill_reason || null,
-        metaUsage: r.llm_info?.total_tokens ? {
-          prompt_tokens: r.llm_info.prompt_tokens,
-          completion_tokens: r.llm_info.completion_tokens,
-          total_tokens: r.llm_info.total_tokens,
-        } : null,
-      },
-    ]);
+    draftSaveState = {};
+    draftSaveResult = {};
+    const msgs = buildConversationMessages(conv);
     messages.set(msgs);
+    const latestRound = (conv.rounds || [])[conv.rounds.length - 1];
+    if (latestRound) {
+      obsStore.setTrace(buildRoundObservability(latestRound));
+    }
     ws = openSocket(id);
     wsConn.set(ws);
     await tick();
@@ -104,6 +94,128 @@
   }
 
   let currentAssistantMsg = null;
+  let draftSaveState = {};
+  let draftSaveResult = {};
+  let autoNamingConvId = null;
+
+  function normalizeAssistantMarkdown(text) {
+    if (!text) return '';
+
+    return text
+      // `###标题` -> `### 标题`
+      .replace(/(^|\n)(#{1,6})([^\s#])/g, '$1$2 $3')
+      // `正文### 标题` -> `正文\n### 标题`
+      .replace(/([^\n])\s*(#{1,6}\s)/g, '$1\n$2')
+      // `说明2. 条目` -> `说明\n2. 条目`
+      .replace(/([^\n])(\d+\.\s)/g, '$1\n$2')
+      // `终端设备- 列表项` / `终端设备 -列表项` -> 换行后的 bullet
+      .replace(/([^\n])\s+([-*])(?=\S)/g, '$1\n$2 ')
+      // `-条目` -> `- 条目`
+      .replace(/(^|\n)(\s*[-*])([^\s-*])/g, '$1$2 $3')
+      // 标题后紧跟有序列表时补空行，提升 marked 对列表的识别稳定性
+      .replace(/(#{1,6}\s[^\n]+)\n(\d+\.\s)/g, '$1\n\n$2')
+      // 连续粘连的有序项之间补换行
+      .replace(/(\S)(\d+\.\s)/g, '$1\n$2');
+  }
+
+  function renderMarkdown(text) {
+    return marked.parse(normalizeAssistantMarkdown(text));
+  }
+
+  function getRoundDisplayContent(round) {
+    const directContent = (round?.agent_response || '').trim();
+    if (directContent) return round.agent_response;
+
+    const skillSummary = (round?.skill_execution?.summary || '').trim();
+    if (skillSummary) return round.skill_execution.summary;
+
+    const resultNode = [...(round?.execution_nodes || [])]
+      .reverse()
+      .find((node) => {
+        const text = (node?.output_detail || node?.output_preview || node?.detail_text || '').trim();
+        if (!text || text === '本轮处理完成') return false;
+        return node?.node_type === 'system_state' || node?.node_type === 'skill_call';
+      });
+    if (resultNode) return resultNode.output_detail || resultNode.output_preview || resultNode.detail_text;
+
+    const fallbackNode = [...(round?.execution_nodes || [])]
+      .reverse()
+      .find((node) => {
+        const text = (node?.output_detail || node?.output_preview || node?.detail_text || '').trim();
+        return text && text !== '本轮处理完成' && node?.node_type !== 'tool_call' && node?.node_type !== 'llm_thought';
+      });
+    if (fallbackNode) return fallbackNode.output_detail || fallbackNode.output_preview || fallbackNode.detail_text;
+
+    return round?.skill_execution?.summary || round?.agent_response || '';
+  }
+
+  function buildConversationMessages(conv) {
+    const rounds = conv.rounds || [];
+    const assistantMessages = [];
+    const nextMessages = rounds.flatMap((round) => {
+      const writingState = round.state_snapshot?.writing_state || null;
+      const assistantMsg = {
+        role: 'assistant',
+        content: getRoundDisplayContent(round),
+        docs: round.documents_generated,
+        ts: round.timestamp,
+        metaSkillId: round.skill_invoked || null,
+        metaSkillName: round.skill_execution?.skill_id || round.skill_invoked || null,
+        metaSkillReason: round.llm_info?.skill_reason || null,
+        metaUsage: round.llm_info?.total_tokens ? {
+          prompt_tokens: round.llm_info.prompt_tokens,
+          completion_tokens: round.llm_info.completion_tokens,
+          total_tokens: round.llm_info.total_tokens,
+        } : null,
+        hasDraft: writingState?.has_draft === true,
+        skillId: round.skill_execution?.skill_id || round.skill_invoked || null,
+      };
+
+      assistantMessages.push(assistantMsg);
+
+      return [
+        { role: 'user', content: round.user_input, ts: round.timestamp },
+        assistantMsg,
+      ];
+    });
+
+    const currentWritingState = conv.writing_state;
+    if (currentWritingState?.draft_content && assistantMessages.length > 0) {
+      const latestDraftMsg =
+        [...assistantMessages].reverse().find((msg) => msg.hasDraft) ||
+        [...assistantMessages].reverse().find((msg) => (
+          currentWritingState.skill_id && msg.skillId === currentWritingState.skill_id
+        )) ||
+        assistantMessages[assistantMessages.length - 1];
+
+      latestDraftMsg.hasDraft = true;
+      if (!(latestDraftMsg.content || '').trim()) {
+        latestDraftMsg.content = currentWritingState.draft_content;
+      }
+
+      if (currentWritingState.saved_version && currentWritingState.saved_path) {
+        draftSaveState[latestDraftMsg.ts] = 'saved';
+        draftSaveResult[latestDraftMsg.ts] = {
+          version: currentWritingState.saved_version,
+          file_path: currentWritingState.saved_path,
+        };
+      }
+    }
+
+    return nextMessages;
+  }
+
+  function buildRoundObservability(round) {
+    return {
+      nodes: round?.execution_nodes || [],
+      events: (round?.execution_events || []).map((event) => ({
+        type: 'execution_event',
+        content: event.display_text || event.name || '执行事件',
+        extra: event,
+        ts: event.timestamp ? new Date(event.timestamp).getTime() : Date.now(),
+      })),
+    };
+  }
 
   function ensureAssistantMessage() {
     if (!currentAssistantMsg) {
@@ -166,6 +278,17 @@
       if (data.sub === 'detail') return;
     } else if (data.type === 'subagent_start') {
       obsStore.addEvent({ type: 'subagent_start', content: data.skill_name || data.skill_id, extra: { skill_id: data.skill_id, skill_name: data.skill_name } });
+    } else if (data.type === 'execution_event') {
+      const event = data.event || {};
+      obsStore.addEvent({
+        type: 'execution_event',
+        content: event.display_text || event.name || '执行事件',
+        extra: event,
+      });
+    } else if (data.type === 'trace_node') {
+      if (data.node) {
+        obsStore.addTraceNode(data.node);
+      }
     } else if (data.type === 'question') {
       obsStore.addEvent({ type: 'question', content: data.content });
       // Finalize the current process bubble (thinking/status), start a fresh one for the question
@@ -177,12 +300,6 @@
       const msg = ensureAssistantMessage();
       msg.thinking = (msg.thinking || '') + data.content;
       if (msg.thinkingOpen === undefined) msg.thinkingOpen = true;
-      messages.update(m => m);
-      scrollToBottom();
-    } else if (data.type === 'reflection') {
-      const msg = ensureAssistantMessage();
-      msg.reflection = (msg.reflection || '') + data.content;
-      if (msg.reflectionOpen === undefined) msg.reflectionOpen = false;
       messages.update(m => m);
       scrollToBottom();
     } else if (data.type === 'summary') {
@@ -203,7 +320,21 @@
       }
     } else if (data.type === 'done') {
       obsStore.addEvent({ type: 'done', content: 'done', extra: { skill_name: data.skill_name, usage: data.usage } });
+      if (data.execution_nodes || data.execution_events) {
+        obsStore.setTrace({
+          nodes: data.execution_nodes || [],
+          events: (data.execution_events || []).map((event) => ({
+            type: 'execution_event',
+            content: event.display_text || event.name || '执行事件',
+            extra: event,
+            ts: event.timestamp ? new Date(event.timestamp).getTime() : Date.now(),
+          })),
+        });
+      }
       if (currentAssistantMsg) {
+        if (!currentAssistantMsg.content && data.skill_execution?.summary) {
+          currentAssistantMsg.content = data.skill_execution.summary;
+        }
         currentAssistantMsg.metaSkillId = data.skill_id || null;
         currentAssistantMsg.metaSkillName = data.skill_name || null;
         currentAssistantMsg.metaSkillReason = data.skill_reason || null;
@@ -310,19 +441,47 @@
     notify('success', '路径已复制');
   }
 
-  // Auto-name: refresh sidebar after first round so server-generated title appears
-  async function tryAutoName() {
-    const convId = $activeConvId;
-    if (!convId) return;
-    // Only trigger on the first round (messages: 1 user + 1 assistant = 2 entries)
-    if ($messages.length !== 2) return;
-    // Small delay to let the server finish naming before we refresh
-    await new Promise(r => setTimeout(r, 1500));
-    triggerConvRefresh();
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  let draftSaveState = {};
-  let draftSaveResult = {};
+  // Auto-name: wait for the backend naming flow to finish, then update the sidebar entry in place.
+  async function tryAutoName() {
+    const convId = $activeConvId;
+    if (!convId || autoNamingConvId === convId) return;
+    // Only trigger on the first round (messages: 1 user + 1 assistant = 2 entries)
+    if ($messages.length !== 2) return;
+    autoNamingConvId = convId;
+    try {
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        try {
+          const res = await conversations.autoName(convId);
+          if (res?.name) {
+            updateConversationSummary(convId, {
+              name: res.name,
+              updated_at: new Date().toISOString(),
+            });
+          }
+          triggerConvRefresh();
+          return;
+        } catch (e) {
+          const message = e?.message || '';
+          const shouldRetry =
+            message.includes('No rounds yet') ||
+            message.includes('Conversation not found');
+
+          if (!shouldRetry || attempt === 5) {
+            throw e;
+          }
+          await sleep(400 * (attempt + 1));
+        }
+      }
+    } catch (e) {
+      console.warn('auto-name failed', e);
+    } finally {
+      if (autoNamingConvId === convId) autoNamingConvId = null;
+    }
+  }
 
   async function saveDraft(msg) {
     const convId = $activeConvId;
@@ -395,7 +554,7 @@
             <div class="bubble" class:error-bubble={msg.isError}>
               {#if msg.content}
                 {#if msg.role === 'assistant'}
-                  <div class="content markdown">{@html marked.parse(msg.content)}</div>
+                  <div class="content markdown">{@html renderMarkdown(msg.content)}</div>
                 {:else}
                   <span class="content">{msg.content}</span>
                 {/if}
@@ -459,21 +618,8 @@
             </div>
           {/if}
 
-          {#if msg.role === 'assistant' && (msg.reflection || msg.summary)}
+          {#if msg.role === 'assistant' && msg.summary}
             <div class="message-artifacts">
-              {#if msg.reflection}
-                <div class="artifact-panel">
-                  <button class="artifact-toggle" on:click={() => toggleMessageSection(msg, 'reflectionOpen')}>
-                    <span class="material-symbols-outlined" style="font-size:15px;">{msg.reflectionOpen ? 'expand_less' : 'expand_more'}</span>
-                    <span class="artifact-title">写作总结</span>
-                    <span class="artifact-meta">过程检查与结论</span>
-                  </button>
-                  {#if msg.reflectionOpen}
-                    <div class="artifact-body markdown">{@html marked.parse(msg.reflection)}</div>
-                  {/if}
-                </div>
-              {/if}
-
               {#if msg.summary}
                 <div class="artifact-panel">
                   <button class="artifact-toggle" on:click={() => toggleMessageSection(msg, 'summaryOpen')}>

@@ -34,6 +34,11 @@ def create_saved_doc_tools(ctx: "ConversationContext") -> Tuple:
     Returns:
         (list_saved_documents_fn, load_saved_document_fn) 元组
     """
+    from agent.adk.runner_adapter import complete_tool_node
+    from agent.models import ExecutionNodeStatus
+
+    execution_id = ctx.current_execution_id or ctx.orchestrator_execution_id
+    parent_node_id = ctx.current_skill_node_id if ctx.current_execution_id else None
 
     async def list_saved_documents(
         doc_type: Optional[str] = None,
@@ -77,6 +82,15 @@ def create_saved_doc_tools(ctx: "ConversationContext") -> Tuple:
             "tool": "list_saved_documents",
             "content": f"已查询历史文档清单：{len(docs)} 份",
         })
+        await complete_tool_node(
+            ctx,
+            execution_id=execution_id,
+            tool_name="list_saved_documents",
+            parent_node_id=parent_node_id,
+            status=ExecutionNodeStatus.COMPLETED,
+            output_preview=f"已查询历史文档清单：{len(docs)} 份",
+            output_detail=result,
+        )
 
         return result
 
@@ -151,6 +165,21 @@ def create_saved_doc_tools(ctx: "ConversationContext") -> Tuple:
             "tool": "load_saved_document",
             "content": summary,
         })
+        await complete_tool_node(
+            ctx,
+            execution_id=execution_id,
+            tool_name="load_saved_document",
+            parent_node_id=parent_node_id,
+            status=ExecutionNodeStatus.COMPLETED,
+            output_preview=summary,
+            output_detail=(
+                f"文档：{ref.doc_name}\n"
+                f"类型：{doc_type}\n"
+                f"版本：v{ref.version}\n"
+                f"日期：{ref.date}\n"
+                f"正文长度：{len(content)} 字"
+            ),
+        )
 
         # 向 ADK session 历史返回摘要，正文不进历史
         return summary

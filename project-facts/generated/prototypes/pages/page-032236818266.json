@@ -1,0 +1,31 @@
+{
+  "page_id": "page-032236818266",
+  "page_name": "start",
+  "title": "Untitled Document",
+  "source_path": "prototypes/assets-system/start.html",
+  "relative_path": "assets-system/start.html",
+  "package_id": "assets-system",
+  "layout_sections": [],
+  "elements": {
+    "buttons": [],
+    "inputs": [],
+    "tables": [],
+    "tabs": [],
+    "dialogs": [],
+    "links": [
+      "CLOSE",
+      "Share Prototype"
+    ]
+  },
+  "visible_texts": [
+    "CLOSE",
+    "Share Prototype",
+    "100%"
+  ],
+  "messages": [],
+  "interactions": [],
+  "outgoing_links": [],
+  "evidence": [],
+  "parser_warnings": [],
+  "llm_summary": "页面“start”（标题：Untitled Document），来源：assets-system/start.html。"
+}

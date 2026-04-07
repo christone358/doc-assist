@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # NextAgent Doc Assistant - 一键启动脚本
 # 用法:
-#   ./start.sh            # 启动前端 + 后端（后台，实时日志输出到终端）
+#   ./start.sh            # 启动前端 + 后端 + MCP（后台，实时日志输出到终端）
 #   ./start.sh backend    # 仅前台启动后端
 #   ./start.sh frontend   # 仅前台启动前端
+#   ./start.sh mcp        # 仅前台启动 MCP server
 #   ./start.sh --reinstall # 强制重新安装所有依赖
 
 set -euo pipefail
@@ -76,7 +77,8 @@ check_port() {
 check_ports() {
     check_port 8000 "Backend"
     check_port 5173 "Frontend"
-    log_info "端口 8000, 5173 可用 ✓"
+    check_port 8765 "MCP Server"
+    log_info "端口 8000, 5173, 8765 可用 ✓"
 }
 
 # ─── 2. 依赖安装 ──────────────────────────────────────────────────────────────
@@ -185,6 +187,20 @@ wait_for_frontend() {
     return 1
 }
 
+wait_for_mcp() {
+    local max=30 i=0
+    while (( i < max )); do
+        if nc -z 127.0.0.1 8765 &>/dev/null 2>&1; then
+            log_success "  ✓ MCP ready:      http://localhost:8765/mcp"
+            return 0
+        fi
+        sleep 1
+        (( i++ ))
+    done
+    log_warn "MCP Server 未在 ${max}s 内就绪，请检查日志: $LOGS_DIR/mcp.log"
+    return 1
+}
+
 # ─── 5. 启动函数 ──────────────────────────────────────────────────────────────
 
 start_backend_bg() {
@@ -195,6 +211,16 @@ start_backend_bg() {
     uvicorn main:app --host 0.0.0.0 --port 8000 \
         >> "$LOGS_DIR/backend.log" 2>&1 &
     echo $! > "$PIDS_DIR/backend.pid"
+}
+
+start_mcp_bg() {
+    cd "$BACKEND_DIR"
+    # shellcheck disable=SC1091
+    source "$BACKEND_DIR/.venv/bin/activate"
+    log_info "MCP Server 启动中..."
+    python mcp_server.py --transport streamable-http \
+        >> "$LOGS_DIR/mcp.log" 2>&1 &
+    echo $! > "$PIDS_DIR/mcp.pid"
 }
 
 start_frontend_bg() {
@@ -211,6 +237,14 @@ start_backend_fg() {
     source "$BACKEND_DIR/.venv/bin/activate"
     log_info "前台启动后端（Ctrl+C 停止）..."
     exec uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+}
+
+start_mcp_fg() {
+    cd "$BACKEND_DIR"
+    # shellcheck disable=SC1091
+    source "$BACKEND_DIR/.venv/bin/activate"
+    log_info "前台启动 MCP Server（Ctrl+C 停止）..."
+    exec python mcp_server.py --transport streamable-http
 }
 
 start_frontend_fg() {
@@ -237,7 +271,11 @@ follow_logs() {
         | sed "s/^/${BLUE}[FRONTEND]${NC} /" &
     TAIL_FE=$!
 
-    wait $TAIL_BE $TAIL_FE
+    tail -f "$LOGS_DIR/mcp.log" \
+        | sed "s/^/${CYAN}[MCP]${NC} /" &
+    TAIL_MCP=$!
+
+    wait $TAIL_BE $TAIL_FE $TAIL_MCP
 }
 
 # ─── 主流程 ───────────────────────────────────────────────────────────────────
@@ -266,6 +304,14 @@ case "$MODE" in
         start_frontend_fg
         ;;
 
+    mcp)
+        check_python
+        check_port 8765 "MCP Server"
+        install_backend_deps
+        create_dirs
+        start_mcp_fg
+        ;;
+
     dev | --reinstall)
         check_python
         check_node
@@ -278,18 +324,22 @@ case "$MODE" in
         # 清空旧日志
         : > "$LOGS_DIR/backend.log"
         : > "$LOGS_DIR/frontend.log"
+        : > "$LOGS_DIR/mcp.log"
 
         start_backend_bg
         start_frontend_bg
+        start_mcp_bg
 
         log_info "等待服务就绪..."
         wait_for_backend || true
         wait_for_frontend || true
+        wait_for_mcp || true
 
         echo ""
         echo -e "${BOLD}服务已启动：${NC}"
         echo -e "  前端:   ${CYAN}http://localhost:5173${NC}"
         echo -e "  后端:   ${CYAN}http://localhost:8000${NC}"
+        echo -e "  MCP:    ${CYAN}http://localhost:8765/mcp${NC}"
         echo -e "  API文档: ${CYAN}http://localhost:8000/docs${NC}"
         echo -e "  停止:   ${YELLOW}./stop.sh${NC}"
         echo ""
@@ -299,7 +349,7 @@ case "$MODE" in
 
     *)
         log_error "未知模式: $MODE"
-        echo "用法: $0 [dev|backend|frontend|--reinstall]"
+        echo "用法: $0 [dev|backend|frontend|mcp|--reinstall]"
         exit 1
         ;;
 esac

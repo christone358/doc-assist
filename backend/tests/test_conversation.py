@@ -1,12 +1,9 @@
 """
 单元测试 - 对话管理
 """
-import pytest
-import asyncio
-import tempfile
-import json
-from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 
 @pytest.fixture
@@ -103,3 +100,44 @@ async def test_add_round_to_nonexistent_conversation(manager):
         "nonexistent-id", "输入", "响应"
     )
     assert result is False
+
+
+@pytest.mark.asyncio
+async def test_add_round_persists_structured_execution_payload(manager):
+    from agent.models import ExecutionActor, ExecutionEventStatus, ExecutionPhase
+
+    conv = await manager.create_conversation()
+    success = await manager.add_round(
+        conv.id,
+        user_input="编写资产管理用户手册",
+        agent_response="# 资产管理用户手册",
+        skill_invoked="write-user-manual",
+        skill_execution={
+            "execution_id": "skill-1",
+            "skill_id": "write-user-manual",
+            "status": "completed",
+            "summary": "已完成用户手册初稿",
+            "retryable": False,
+        },
+        execution_events=[
+            {
+                "execution_id": "main-1",
+                "actor": "orchestrator",
+                "phase": "plan",
+                "name": "orchestrator_run",
+                "status": "started",
+                "display_text": "开始规划本轮处理路径",
+            }
+        ],
+        state_snapshot={"writing_state": {"module_name": "资产管理", "has_draft": True}},
+    )
+
+    assert success is True
+    loaded = await manager.get_conversation(conv.id)
+    round_data = loaded.rounds[0]
+    assert round_data.skill_execution is not None
+    assert round_data.skill_execution.skill_id == "write-user-manual"
+    assert round_data.execution_events[0].phase == ExecutionPhase.PLAN
+    assert round_data.execution_events[0].actor == ExecutionActor.ORCHESTRATOR
+    assert round_data.execution_events[0].status == ExecutionEventStatus.STARTED
+    assert round_data.state_snapshot["writing_state"]["has_draft"] is True

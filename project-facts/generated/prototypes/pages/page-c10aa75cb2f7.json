@@ -1,0 +1,26 @@
+{
+  "page_id": "page-c10aa75cb2f7",
+  "page_name": "业务板块配置",
+  "title": "业务板块配置",
+  "source_path": "prototypes/assets-system/业务板块配置.html",
+  "relative_path": "assets-system/业务板块配置.html",
+  "package_id": "assets-system",
+  "layout_sections": [],
+  "elements": {
+    "buttons": [],
+    "inputs": [],
+    "tables": [],
+    "tabs": [],
+    "dialogs": [],
+    "links": []
+  },
+  "visible_texts": [
+    "﻿"
+  ],
+  "messages": [],
+  "interactions": [],
+  "outgoing_links": [],
+  "evidence": [],
+  "parser_warnings": [],
+  "llm_summary": "页面“业务板块配置”，来源：assets-system/业务板块配置.html。"
+}

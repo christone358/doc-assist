@@ -6,9 +6,21 @@
 
 1. `context_loader` 对 prototypes 的读取仍偏向原始内容，不适合直接作为用户手册、需求说明等文档写作上下文。
 2. 模块与页面的对应关系是人工维护的，这是权威事实；但系统缺少基于这些页面名回查 Axure 原型包、提取结构化页面事实的能力。
-3. 写作 Skill 虽然已经知道“原型可作为事实来源”，但缺少专门工具来按页面读取结构化页面要素，因此无法可靠生成真实按钮、字段、表格列、提示语和交互路径。
+3. 写作 Skill 虽然已经知道“原型可作为事实来源”，但缺少通过 MCP server 读取页面结构化要素的专门能力，因此无法可靠生成真实按钮、字段、表格列、提示语和交互路径。
 
-本次设计要在不改变“模块档案是唯一人工维护事实源”这一前提下，引入系统级原型解析能力，并让专项写作 Skill 能按需调用。
+本次设计要在不改变“模块档案是唯一人工维护事实源”这一前提下，引入系统级原型解析能力，并将其作为 MCP server 暴露给 Agent 与专项写作 Skill 按需调用。
+
+本次交付将明确拆成两个开发对象：
+
+1. **Axure 原型包解析器**
+- 输入：`project-facts/prototypes/` 下的完整 Axure HTML 导出目录
+- 输出：页面索引、sitemap、单页结构化页面事实、解析告警
+- 责任：把原始 HTML 包转换成 LLM 可消费的中间表示
+
+2. **`prototypes.*` MCP 工具**
+- 输入：`module_ref`、`page_ref`、可选的 `package_ref`
+- 输出：页面列表、单页详情、来源路径、证据与告警
+- 责任：把解析结果稳定暴露给 Agent / Skill，而不是让调用方直接接触 HTML 或派生文件
 
 ## Goals / Non-Goals
 
@@ -16,7 +28,7 @@
 - 自动扫描 `project-facts/prototypes/` 下的 Axure 导出目录，识别页面、入口页和页面间关系。
 - 为每个页面生成结构化页面事实，至少覆盖页面标题、布局分区、关键界面元素、可见文本和主要交互。
 - 将解析结果沉淀为派生索引和页面事实缓存，供 Agent、Skill 和后续 UI 浏览能力复用。
-- 为文档编写 Skill 提供稳定的系统级查询工具，使其可以按模块关联页面和页面详情读取原型事实。
+- 为文档编写 Skill 和 Agent 提供稳定的 MCP 原型查询能力，使其可以按模块关联页面和页面详情读取原型事实。
 - 保持模块档案中的页面名称列表仍是模块到页面关系的权威来源，系统只做解析与匹配，不反向改写人工事实。
 
 **Non-Goals:**
@@ -27,14 +39,15 @@
 
 ## Decisions
 
-### 决策1：将原型解析做成系统级共享能力，而不是单个 Skill 私有脚本
+### 决策1：将原型解析做成系统级共享能力，并通过 MCP server 暴露
 
-**选择**：在后端新增系统级原型解析与查询能力，由 Skill 执行框架统一注入给文档编写类 Skill 使用。
+**选择**：在后端新增系统级原型解析能力，并通过 MCP server 暴露 `prototypes.*` namespace；ADK 层只负责把这些 MCP 工具包装给主 Agent 和 Skill Sub-agent 使用。
 
 **理由**：
 - Axure 解析是基础设施能力，不只服务用户手册，需求、设计、测试等文档也可能复用。
 - 集中实现可以统一缓存、错误处理和来源追溯，避免多个 Skill 各自读取 HTML 源码。
-- 统一注入后，Skill 是否使用由其 `skill.md` 指引和执行时意图决定，而不是由 Skill 自己重复实现解析逻辑。
+- 当前系统的资源访问已经走 MCP 运行时，原型能力继续以宿主内置工具形态新增会破坏运行时一致性。
+- 通过 MCP 暴露后，Skill 是否使用由其 `skill.md` 指引和执行时意图决定，而不是由 Skill 自己重复实现解析逻辑。
 
 **备选方案**：
 - 仅在 `write-user-manual` 下实现私有脚本。
@@ -96,6 +109,16 @@
 - `evidence`
 - `parser_warnings`
 
+推荐再补一个适合 LLM 使用的聚合字段：
+- `llm_summary`
+
+其中 `llm_summary` 不是模型生成内容，而是解析器基于结构化事实拼装出的紧凑文本摘要，例如：
+- 页面定位：页面名、标题、来源路径
+- 关键区域：顶部筛选区、列表区、详情弹窗
+- 关键控件：按钮、输入框、表格列
+- 用户可见反馈：提示语、空态、错误提示
+- 主要交互：查询、新增、编辑、删除、页面跳转
+
 **理由**：
 - 单靠 DOM 只能拿到静态文本，无法较好描述 Axure 特有交互。
 - 单靠 Axure 特征解析又难以兼容普通 HTML 页面或前端静态页面。
@@ -107,11 +130,22 @@
 - 引入浏览器渲染和视觉识别。
   缺点是依赖更重、实现复杂度高，不适合当前阶段。
 
-### 决策5：系统自动在“派生视图刷新”与“Skill 查询前”确保原型索引新鲜
+### 决策4.1：解析器输出“结构化 JSON + LLM 友好摘要”，而不是只输出一种格式
+
+**选择**：
+- 页面事实文件保存完整结构化 JSON，供程序与 MCP 工具使用。
+- MCP 返回中同时提供结构化字段和 `llm_summary`，供 agent/skill 直接注入上下文。
+
+**理由**：
+- 纯 JSON 适合程序处理，但直接喂给 LLM 可读性一般。
+- 纯文本摘要便于模型理解，但不利于工具链复用和后续扩展。
+- 双表示可以同时满足“可调用”和“可写作”两类需求。
+
+### 决策5：系统自动在“派生视图刷新”与“MCP 查询前”确保原型索引新鲜
 
 **选择**：
 - 扩展现有模块档案派生流程，在生成模块索引时同时刷新原型派生索引。
-- 原型查询工具在执行前检查包目录指纹；若检测到原型包变更，则先增量重建相关派生产物，再返回结果。
+- `prototypes.*` MCP 工具在执行前检查包目录指纹；若检测到原型包变更，则先增量重建相关派生产物，再返回结果。
 
 **理由**：
 - 不要求用户显式执行“重新解析原型”。
@@ -124,19 +158,35 @@
 - 每次工具调用都全量重建。
   缺点是性能浪费明显。
 
-### 决策6：为 Skill 提供“页面列表 + 页面详情”两类工具，轻重分离
+### 决策6：通过 `prototypes.*` MCP namespace 提供“页面列表 + 页面详情”两类能力，轻重分离
 
-**选择**：新增两类系统级工具并注入到文档编写 Skill Sub-agent：
+**选择**：在 MCP server 中新增 `prototypes.*` namespace，至少暴露两类公共工具：
 
-- `list_prototype_pages(module_id)`：
+- `prototypes.list_pages(module_ref)`：
   返回该模块档案关联页面的匹配结果与摘要，包括页面名、路径、标题和匹配状态。
-- `get_prototype_page_detail(page_ref)`：
+- `prototypes.get_page(page_ref)`：
   返回指定页面的结构化页面事实，包括元素、交互、可见消息和来源证据。
 
-同时保留 `get_fact_detail(target_id, "prototypes")` 作为轻量事实入口，但其输出升级为“模块关联页面摘要”，而不是原始 HTML 内容。
+同时保留模块事实中的“页面 / 原型”摘要作为轻量事实入口，但页面详情能力统一通过 MCP 原型工具获取。
+
+建议第一阶段的工具面定义为：
+
+- `prototypes.list_pages(module_ref)`
+  - 用途：列出某模块关联页面
+  - 返回：页面名、页面标题、相对路径、匹配状态、候选页面引用
+
+- `prototypes.get_page(page_ref)`
+  - 用途：获取单页结构化页面事实
+  - 返回：页面事实 JSON、`llm_summary`、来源路径、解析告警
+
+可预留但不强制首期实现：
+
+- `prototypes.list_packages()`
+- `prototypes.get_sitemap(package_ref)`
+- `prototypes.refresh(package_ref)`
 
 **理由**：
-- 这与现有 `overview/detail` 的工具使用习惯一致。
+- 这与当前 MCP 运行时的 namespace 治理方式一致，避免在宿主和 MCP 两套工具面之间分叉。
 - 写作 Skill 可以先定位页面，再按需拉取细节，避免一次把所有页面事实塞进上下文。
 - 页面详情响应中保留 `evidence` 和 `parser_warnings`，有利于写作时显式处理不确定项。
 
@@ -144,9 +194,9 @@
 - 只提供一个“大而全”的原型上下文工具。
   缺点是输出过大，难以控制 token 和检索精度。
 
-### 决策7：所有文档编写 Skill 都可获得工具，但只有需要真实界面信息时才调用
+### 决策7：所有文档编写 Skill 都可获得 MCP 原型工具包装，但只有需要真实界面信息时才调用
 
-**选择**：系统在 Skill 执行层统一注册原型工具给文档编写类 Skill；Skill 是否调用由其 `skill.md` 正文约束和执行时上下文决定。
+**选择**：系统在主 Agent 与 Skill 执行层统一注册 `prototypes.*` 的 MCP wrapper 给文档编写类 Skill；Skill 是否调用由其 `skill.md` 正文约束和执行时上下文决定。
 
 **理由**：
 - 工具能力可共享，减少按 Skill 逐个注册的运维成本。
@@ -160,17 +210,267 @@
 ## Risks / Trade-offs
 
 - **[Axure 导出结构存在版本差异]** → 解析器采用通用 DOM 提取为底线，再对已识别出的 Axure 特征文件做增强；无法识别时返回 `parser_warnings`，不阻断整体流程。
-- **[页面名称匹配可能不唯一]** → `list_prototype_pages` 返回匹配状态和候选路径；当匹配不唯一时，Skill 必须优先使用模块档案声明页面名并在写作中保留待确认标记。
+- **[页面名称匹配可能不唯一]** → `prototypes.list_pages` 返回匹配状态和候选路径；当匹配不唯一时，Skill 必须优先使用模块档案声明页面名并在写作中保留待确认标记。
 - **[页面事实过大导致上下文膨胀]** → 使用“页面列表 + 单页详情”两级工具，并限制详情只返回结构化摘要和关键证据，不直接返回原始 HTML。
 - **[派生产物过期]** → 通过目录指纹和文件修改时间做增量刷新；查询前自动校验，避免用户手动维护缓存。
 - **[解析结果被误认为权威事实]** → 在设计和输出字段上明确将模块档案作为权威来源，页面事实只作为派生结果与写作证据。
+- **[MCP 公共工具契约不稳定]** → 原型工具采用宿主无关的 `module_ref` / `page_ref` 参数和结构化返回，避免暴露 ADK session 或宿主内部对象名。
 
 ## Migration Plan
 
 1. 在 `project-facts/generated/` 下新增原型派生目录和 JSON 产物，不迁移或重写现有原始 Axure 包。
 2. 扩展现有派生视图生成流程，使其在保留 `page-index.json` 兼容能力的同时产出更丰富的页面事实文件。
-3. 将 `get_fact_detail(..., "prototypes")` 的输出从“原型原文”切换为“模块关联页面摘要”，并在写作 Skill 中逐步引入新工具。
+3. 在 `backend/mcp_runtime/` 中新增 `prototypes.*` namespace，并通过 `mcp_tools.py` 为主 Agent 和 Skill 提供对应 wrapper。
 4. 保留旧的 `prototypes/` 原始目录结构和模块档案页面名称维护方式，不要求用户补录新字段。
+
+## Delivery Shape
+
+实现阶段应至少落地以下模块：
+
+- `prototype parser`
+  - 扫描原型包
+  - 解析页面
+  - 生成派生产物
+
+- `prototype runtime access`
+  - 读取派生产物
+  - 暴露 `prototypes.*` MCP 工具
+  - 适配 ADK MCP wrapper
+
+## Module Design
+
+建议按以下模块拆分实现，避免把扫描、解析、索引和 MCP 暴露耦合在一个文件里：
+
+### 1. 原型包扫描器
+
+职责：
+- 发现 `project-facts/prototypes/` 下的原型包根目录
+- 识别入口页、页面文件和资源目录
+- 计算包级指纹，支持增量刷新
+
+建议职责边界：
+- 输入：`facts_root / prototypes`
+- 输出：`PrototypePackageManifest`
+
+建议结构：
+- `backend/prototype_parser/package_scanner.py`
+- `backend/prototype_parser/models.py`
+
+### 2. 页面解析器
+
+职责：
+- 解析单个 HTML 页面
+- 提取结构化页面元素
+- 提取页面跳转和 Axure 特征交互
+- 生成 `llm_summary`
+
+建议子步骤：
+- `html_reader`：读取并规范化 HTML
+- `dom_extractor`：提取标题、文本、按钮、输入、表格、链接
+- `axure_enricher`：提取跳转、热点、动态面板等 Axure 特征
+- `summary_builder`：从结构化事实拼装 `llm_summary`
+
+建议结构：
+- `backend/prototype_parser/page_parser.py`
+- `backend/prototype_parser/dom_extractor.py`
+- `backend/prototype_parser/axure_enricher.py`
+- `backend/prototype_parser/summary_builder.py`
+
+### 3. 派生产物仓库
+
+职责：
+- 将解析结果写入 `project-facts/generated/prototypes/`
+- 提供页面索引与单页事实读取接口
+- 屏蔽 JSON 文件组织细节
+
+建议结构：
+- `backend/prototype_parser/repository.py`
+
+### 4. MCP Namespace 适配层
+
+职责：
+- 将派生产物仓库包装成 MCP 工具
+- 做参数校验、错误转换、返回结构组装
+
+建议结构：
+- `backend/mcp_runtime/prototypes_namespace.py`
+
+### 5. ADK MCP 工具包装层
+
+职责：
+- 将 `prototypes.*` MCP 工具包装成 ADK 可调用函数
+- 将 `llm_summary` 与必要事实写入当前轮次上下文
+
+建议结构：
+- 在 `backend/agent/adk/mcp_tools.py` 中新增 `prototypes.*` wrappers
+
+## Data Shapes
+
+建议至少定义以下内部数据结构：
+
+### PrototypePackageManifest
+
+```json
+{
+  "package_id": "axure-export",
+  "package_name": "axure-export",
+  "root_path": "prototypes/axure-export",
+  "entry_page": "index.html",
+  "fingerprint": "sha256:...",
+  "page_count": 18,
+  "updated_at": "2026-04-02T10:00:00Z"
+}
+```
+
+### PrototypePageIndexItem
+
+```json
+{
+  "page_id": "page-user-list",
+  "page_name": "用户列表页",
+  "title": "用户管理",
+  "package_id": "axure-export",
+  "source_path": "prototypes/axure-export/用户列表页.html",
+  "relative_path": "axure-export/用户列表页.html",
+  "outgoing_page_ids": ["page-user-detail"],
+  "aliases": ["用户列表", "用户管理列表页"]
+}
+```
+
+### PrototypePageFact
+
+```json
+{
+  "page_id": "page-user-list",
+  "page_name": "用户列表页",
+  "title": "用户管理",
+  "source_path": "prototypes/axure-export/用户列表页.html",
+  "layout_sections": [
+    "顶部查询区",
+    "列表区",
+    "分页区"
+  ],
+  "elements": {
+    "buttons": ["查询", "重置", "新增用户", "导出"],
+    "inputs": ["用户名", "手机号"],
+    "tables": [
+      {
+        "name": "用户列表",
+        "columns": ["用户名", "姓名", "状态", "角色", "创建时间"]
+      }
+    ],
+    "dialogs": ["新增用户"],
+    "tabs": [],
+    "links": ["详情"]
+  },
+  "messages": ["新增成功", "未查询到数据"],
+  "interactions": [
+    "点击【查询】刷新用户列表",
+    "点击【新增用户】打开“新增用户”对话框",
+    "点击列表中的【详情】跳转到用户详情页"
+  ],
+  "outgoing_links": [
+    {
+      "label": "详情",
+      "target_page_id": "page-user-detail"
+    }
+  ],
+  "evidence": [
+    "按钮: 查询",
+    "表格列: 用户名 / 姓名 / 状态"
+  ],
+  "parser_warnings": [],
+  "llm_summary": "页面“用户列表页”..."
+}
+```
+
+## MCP Contracts
+
+建议第一阶段把 MCP 返回 schema 固定下来，避免后续 agent/skill 适配抖动。
+
+### `prototypes.list_pages(module_ref)`
+
+输入：
+
+```json
+{
+  "module_ref": "用户管理"
+}
+```
+
+输出：
+
+```json
+{
+  "module": {
+    "id": "mod-123",
+    "name": "用户管理"
+  },
+  "pages": [
+    {
+      "page_name": "用户列表页",
+      "page_ref": "page-user-list",
+      "title": "用户管理",
+      "relative_path": "axure-export/用户列表页.html",
+      "match_status": "matched"
+    }
+  ],
+  "llm_summary": "模块“用户管理”关联 2 个页面：用户列表页、用户详情页。"
+}
+```
+
+### `prototypes.get_page(page_ref)`
+
+输入：
+
+```json
+{
+  "page_ref": "page-user-list"
+}
+```
+
+输出：
+
+```json
+{
+  "page": {
+    "page_id": "page-user-list",
+    "page_name": "用户列表页",
+    "title": "用户管理",
+    "relative_path": "axure-export/用户列表页.html"
+  },
+  "fact": {},
+  "llm_summary": "页面“用户列表页”包含顶部查询区和用户列表区...",
+  "parser_warnings": []
+}
+```
+
+## Call Flow
+
+建议运行流程如下：
+
+1. 用户在模块档案中维护页面名称
+2. 原型包解析器扫描 Axure 导出目录，生成索引和单页事实
+3. `prototypes.list_pages(module_ref)` 根据模块档案页面名称匹配页面索引
+4. Skill 根据页面清单决定要读取哪些页面
+5. Skill 调用 `prototypes.get_page(page_ref)` 获取单页事实和 `llm_summary`
+6. `mcp_tools.py` 将 `llm_summary` 和必要事实片段写入当前轮次上下文
+7. 写作 Skill 基于这些事实编写文档
+
+## Error Handling
+
+建议明确以下错误类型，便于 MCP 和 Agent 统一处理：
+
+- `prototype_package_missing`
+- `prototype_page_not_found`
+- `prototype_page_ambiguous`
+- `prototype_parse_failed`
+- `prototype_index_stale`
+
+其中：
+- `prototype_page_ambiguous` 应返回候选页面列表
+- `prototype_parse_failed` 应返回页面路径和简要原因
+- `prototype_index_stale` 应优先内部自动刷新，刷新失败后再返回错误
 
 ## Open Questions
 

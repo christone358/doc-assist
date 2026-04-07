@@ -1,0 +1,67 @@
+{
+  "page_id": "page-8cfcb604fd2d",
+  "page_name": "chrome",
+  "title": "Install the Axure RP Chrome Extension",
+  "source_path": "prototypes/assets-system/resources/chrome/chrome.html",
+  "relative_path": "assets-system/resources/chrome/chrome.html",
+  "package_id": "assets-system",
+  "layout_sections": [],
+  "elements": {
+    "buttons": [],
+    "inputs": [],
+    "tables": [],
+    "tabs": [],
+    "dialogs": [],
+    "links": [
+      "Axure Cloud",
+      "Add Extension",
+      "View in Chrome",
+      "Learn more",
+      "support@axure.com"
+    ]
+  },
+  "visible_texts": [
+    "﻿",
+    "Axure RP Extension for Chrome",
+    "Google Chrome requires an extension to view locally published prototypes. Alternatively, upload your RP file to",
+    "Axure Cloud",
+    "or use a different browser. You can also Preview from Axure RP.",
+    "View locally published prototypes in Chrome",
+    "1. Add the extension from Chrome Web Store.",
+    "Add Extension",
+    "2. Open",
+    "More tools → Extensions",
+    "3. View Axure RP Extension",
+    "Details",
+    "4. Turn on",
+    "Allow access to file URLs",
+    "5. Click this button",
+    "View in Chrome",
+    "Need private or on-premises hosting?",
+    "Axure Cloud for Business gives you all of the features of Axure Cloud plus control of accounts and permissions. For hosting behind your firewall, check out Axure Cloud On-Premises.",
+    "Learn more",
+    "FAQs",
+    "Why do I need to install the extension?",
+    "Google requires this extension to be installed to allow the viewing of locally published HTML files in Chrome.",
+    "Why does this extension require a high access level?",
+    "This extension requires a high access level to allow the viewing of the file:// protocol. Axure does not track or access any of your information.",
+    "We're here to help",
+    "If you have any questions, please email us at",
+    "support@axure.com",
+    "."
+  ],
+  "messages": [],
+  "interactions": [
+    "点击【View in Chrome】跳转到 ../../start.html"
+  ],
+  "outgoing_links": [
+    {
+      "label": "View in Chrome",
+      "target_page_id": "page-b5c7513b3e58",
+      "target": "../../start.html"
+    }
+  ],
+  "evidence": [],
+  "parser_warnings": [],
+  "llm_summary": "页面“chrome”（标题：Install the Axure RP Chrome Extension），来源：assets-system/resources/chrome/chrome.html。\n主要交互：点击【View in Chrome】跳转到 ../../start.html。"
+}

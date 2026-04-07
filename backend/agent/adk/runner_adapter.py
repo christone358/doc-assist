@@ -13,10 +13,25 @@ Runner 适配层 - 将 ADK Runner 事件流转换为 WebSocket 消息格式。
 """
 
 import asyncio
+import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple
+
+from agent.models import (
+    ExecutionActor,
+    ExecutionEvent,
+    ExecutionEventStatus,
+    ExecutionNodeStatus,
+    ExecutionNodeType,
+    ExecutionObjectNode,
+    ExecutionPhase,
+    SkillExecutionResult,
+    ToolSourceType,
+)
 
 try:
     from google.adk.agents.run_config import RunConfig, StreamingMode
@@ -65,6 +80,11 @@ COMPRESSION_ROUND_THRESHOLD = 6         # 第二层：超过此轮次触发早�
 FORCE_PRUNE_THRESHOLD = 15              # 第三层：超过此轮次强制保留最近 N 轮
 FORCE_PRUNE_KEEP_ROUNDS = 8             # 第三层：强制裁剪后保留的轮数
 
+DISPLAY_INPUT_BUDGET = 500
+OUTPUT_PREVIEW_BUDGET = 800
+OUTPUT_DETAIL_BUDGET = 2400
+THOUGHT_DETAIL_BUDGET = 3200
+
 # ── 全局活跃上下文表：conversation_id → ConversationContext ─────────────────
 # 用于 ask_user 场景下：用户回复直接投入等待中的队列
 _active_contexts: Dict[str, "ConversationContext"] = {}
@@ -85,6 +105,7 @@ class SessionEntry:
     last_active_at: float = field(default_factory=time.time)
     round_count: int = 0
     last_skill_execution_summary: Optional[str] = None
+    clarification_context: List[str] = field(default_factory=list)
 
 
 # conversation_id → SessionEntry
@@ -138,6 +159,23 @@ def _compute_stream_delta(previous_text: str, incoming_text: str) -> tuple[str, 
     return incoming_text, previous_text + incoming_text
 
 
+def _final_response_channel(
+    *,
+    draft_updated: bool,
+    selected_skill_id: Optional[str],
+    prefer_thinking_stream: bool,
+) -> str:
+    """Choose where the final user-visible answer should be rendered.
+
+    Even if the main agent called a Skill or the request looked like a writing
+    task, a round that did not produce/update a draft should still surface its
+    final answer in the left chat bubble instead of the thinking panel.
+    """
+    if draft_updated:
+        return "none"
+    return "text"
+
+
 def _looks_like_writing_request(message: str) -> bool:
     """Best-effort heuristic for requests that should delegate to writing flow.
 
@@ -156,6 +194,56 @@ def _looks_like_writing_request(message: str) -> bool:
         "manual", "document", "doc",
     )
     return any(keyword in text for keyword in writing_keywords)
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _with_truncation_suffix(text: str) -> str:
+    return text.rstrip() + "\n\n[内容已截断]"
+
+
+def _normalize_display_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    try:
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    except TypeError:
+        return str(value)
+
+
+def _budget_text(value: Any, *, limit: int) -> Tuple[str, bool]:
+    text = _normalize_display_text(value)
+    if not text:
+        return "", False
+    if len(text) <= limit:
+        return text, False
+    return _with_truncation_suffix(text[:limit].rstrip()), True
+
+
+def _tool_source(tool_name: str) -> ToolSourceType:
+    if tool_name.startswith("skill_") or tool_name.startswith("skill."):
+        return ToolSourceType.INTERNAL
+    if "." in tool_name:
+        return ToolSourceType.MCP
+    return ToolSourceType.BUILTIN
+
+
+def _map_event_status(status: ExecutionEventStatus) -> ExecutionNodeStatus:
+    if status == ExecutionEventStatus.COMPLETED:
+        return ExecutionNodeStatus.COMPLETED
+    if status == ExecutionEventStatus.FAILED:
+        return ExecutionNodeStatus.FAILED
+    return ExecutionNodeStatus.RUNNING
+
+
+def _make_node_id(prefix: str) -> str:
+    return f"{prefix}-{uuid.uuid4().hex}"
 
 
 def _prune_session_events(entry: SessionEntry, keep_rounds: int) -> None:
@@ -256,6 +344,8 @@ class ConversationContext:
     conversation_id: str
     ws_sender: Callable  # async (dict) -> None
     conversation_manager: Any  # ConversationManager 实例
+    orchestrator_execution_id: str = field(default_factory=lambda: f"main-{uuid.uuid4().hex}")
+    current_execution_id: Optional[str] = None
 
     # ask_user 机制：工具 await 此队列，WebSocket handler 将用户回复 put 进来
     user_input_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
@@ -267,18 +357,33 @@ class ConversationContext:
     skill_reason: Optional[str] = None
     draft_updated: bool = False
     llm_usage: Optional[dict] = None
+    latest_skill_execution_result: Optional[SkillExecutionResult] = None
+    execution_events: List[ExecutionEvent] = field(default_factory=list)
+    execution_nodes: List[ExecutionObjectNode] = field(default_factory=list)
+    execution_node_index: Dict[str, ExecutionObjectNode] = field(default_factory=dict)
+    execution_node_order: int = 0
+    open_tool_nodes: Dict[str, List[str]] = field(default_factory=dict)
+    active_thought_node_id: Optional[str] = None
+    current_skill_node_id: Optional[str] = None
+    current_question_node_id: Optional[str] = None
+    clarification_context: List[str] = field(default_factory=list)
 
-    # 事实收集累积（per-round）：get_fact_overview / get_fact_detail 的结果按顺序追加
-    # write_document 会自动将这些内容注入到写作上下文中。
+    # legacy facts 累积（per-round）：保留给旧工具路径的兼容回退。
+    # 正常 MCP 模式下由 loaded_facts_parts / loaded_skill_resource_parts / loaded_docs_parts 承担写作上下文注入。
     # 不跨轮累积——每轮 stream_message 创建新实例时自动清零。
     collected_facts_parts: List[str] = field(default_factory=list)
 
-    # 历史已保存文档正文（per-round）：load_saved_document / get_current_draft 写入，write_document 按需读取。
+    # MCP working context（per-round）：按来源分层记录显式读取的运行时资源。
+    loaded_facts_parts: List[str] = field(default_factory=list)
+    loaded_skill_resource_parts: List[str] = field(default_factory=list)
+    loaded_docs_parts: List[str] = field(default_factory=list)
+
+    # 历史已保存文档正文（per-round）：`docs.load_saved` / `get_current_draft` 写入，write_document 按需读取。
     # context 参数优先；context 为空时使用此字段作为草稿基础。
     # 不跨轮持久化——每轮创建新实例时自动清零。
     loaded_base_draft: Optional[str] = None
 
-    # 历史文档来源标识（per-round）：load_saved_document 写入。
+    # 历史文档来源标识（per-round）：`docs.load_saved` 写入。
     # write_document 保存时优先用此 doc_name，确保修改后继续追加版本而非创建新文档目录。
     loaded_base_doc_name: Optional[str] = None
 
@@ -302,6 +407,445 @@ class ConversationContext:
 def get_active_context(conversation_id: str) -> Optional[ConversationContext]:
     """获取指定对话的活跃上下文（供 WebSocket handler 投递用户回复）。"""
     return _active_contexts.get(conversation_id)
+
+
+def _tool_stack_key(
+    execution_id: Optional[str],
+    tool_name: str,
+    parent_node_id: Optional[str],
+) -> str:
+    canonical_name = str(tool_name or "").replace(".", "_")
+    return "::".join([execution_id or "root", parent_node_id or "top", canonical_name])
+
+
+async def _send_trace_node(ctx: ConversationContext, node: ExecutionObjectNode) -> None:
+    await ctx.ws_sender(
+        {
+            "type": "trace_node",
+            "node": node.model_dump(mode="json"),
+        }
+    )
+
+
+def _next_created_order(ctx: ConversationContext) -> int:
+    ctx.execution_node_order += 1
+    return ctx.execution_node_order
+
+
+async def create_execution_node(
+    ctx: ConversationContext,
+    *,
+    node_type: ExecutionNodeType,
+    title: str,
+    status: ExecutionNodeStatus,
+    actor: ExecutionActor,
+    parent_node_id: Optional[str] = None,
+    execution_id: Optional[str] = None,
+    tool_name: Optional[str] = None,
+    tool_source: Optional[ToolSourceType] = None,
+    skill_id: Optional[str] = None,
+    skill_name: Optional[str] = None,
+    reason: Optional[str] = None,
+    display_input: str = "",
+    output_preview: str = "",
+    output_detail: str = "",
+    detail_text: str = "",
+    metadata: Optional[Dict[str, Any]] = None,
+    truncated_fields: Optional[List[str]] = None,
+) -> ExecutionObjectNode:
+    now = _now()
+    node = ExecutionObjectNode(
+        node_id=_make_node_id(node_type.value),
+        node_type=node_type,
+        title=title,
+        status=status,
+        actor=actor,
+        parent_node_id=parent_node_id,
+        execution_id=execution_id,
+        tool_name=tool_name,
+        tool_source=tool_source,
+        skill_id=skill_id,
+        skill_name=skill_name,
+        reason=reason,
+        display_input=display_input,
+        output_preview=output_preview,
+        output_detail=output_detail,
+        detail_text=detail_text,
+        metadata=metadata or {},
+        created_at=now,
+        updated_at=now,
+        created_order=_next_created_order(ctx),
+        truncated_fields=list(truncated_fields or []),
+        is_truncated=bool(truncated_fields),
+    )
+    ctx.execution_nodes.append(node)
+    ctx.execution_node_index[node.node_id] = node
+    await _send_trace_node(ctx, node)
+    return node
+
+
+async def update_execution_node(
+    ctx: ConversationContext,
+    node_id: str,
+    *,
+    title: Optional[str] = None,
+    status: Optional[ExecutionNodeStatus] = None,
+    reason: Optional[str] = None,
+    display_input: Optional[str] = None,
+    output_preview: Optional[str] = None,
+    output_detail: Optional[str] = None,
+    detail_text: Optional[str] = None,
+    metadata_updates: Optional[Dict[str, Any]] = None,
+    append_detail_text: Optional[str] = None,
+    append_output_detail: Optional[str] = None,
+    truncated_fields: Optional[List[str]] = None,
+) -> Optional[ExecutionObjectNode]:
+    node = ctx.execution_node_index.get(node_id)
+    if node is None:
+        return None
+
+    if title is not None:
+        node.title = title
+    if status is not None:
+        node.status = status
+    if reason is not None:
+        node.reason = reason
+    if display_input is not None:
+        node.display_input = display_input
+    if output_preview is not None:
+        node.output_preview = output_preview
+    if output_detail is not None:
+        node.output_detail = output_detail
+    if detail_text is not None:
+        node.detail_text = detail_text
+    if append_detail_text:
+        node.detail_text = (node.detail_text or "") + append_detail_text
+    if append_output_detail:
+        node.output_detail = (node.output_detail or "") + append_output_detail
+    if metadata_updates:
+        node.metadata = {**node.metadata, **metadata_updates}
+    if truncated_fields is not None:
+        merged = sorted(set([*node.truncated_fields, *truncated_fields]))
+        node.truncated_fields = merged
+        node.is_truncated = bool(merged)
+    node.updated_at = _now()
+    await _send_trace_node(ctx, node)
+    return node
+
+
+def _tool_parent_node_id(ctx: ConversationContext) -> Optional[str]:
+    return ctx.current_skill_node_id
+
+
+async def start_tool_node(
+    ctx: ConversationContext,
+    *,
+    execution_id: Optional[str],
+    actor: ExecutionActor,
+    tool_name: str,
+    title: str,
+    params: Optional[Dict[str, Any]] = None,
+    parent_node_id: Optional[str] = None,
+    skill_id: Optional[str] = None,
+) -> ExecutionObjectNode:
+    display_input, input_truncated = _budget_text(params or {}, limit=DISPLAY_INPUT_BUDGET)
+    truncated_fields = ["display_input"] if input_truncated else []
+    node = await create_execution_node(
+        ctx,
+        node_type=ExecutionNodeType.TOOL_CALL,
+        title=title,
+        status=ExecutionNodeStatus.RUNNING,
+        actor=actor,
+        parent_node_id=parent_node_id,
+        execution_id=execution_id,
+        tool_name=tool_name,
+        tool_source=_tool_source(tool_name),
+        skill_id=skill_id,
+        display_input=display_input,
+        output_preview="",
+        output_detail="",
+        metadata={"tool_name": tool_name},
+        truncated_fields=truncated_fields,
+    )
+    stack_key = _tool_stack_key(execution_id, tool_name, parent_node_id)
+    ctx.open_tool_nodes.setdefault(stack_key, []).append(node.node_id)
+    return node
+
+
+def _find_open_tool_node_id(
+    ctx: ConversationContext,
+    *,
+    execution_id: Optional[str],
+    tool_name: str,
+    parent_node_id: Optional[str],
+) -> Optional[str]:
+    stack_key = _tool_stack_key(execution_id, tool_name, parent_node_id)
+    stack = ctx.open_tool_nodes.get(stack_key) or []
+    return stack[-1] if stack else None
+
+
+async def complete_tool_node(
+    ctx: ConversationContext,
+    *,
+    execution_id: Optional[str],
+    tool_name: str,
+    parent_node_id: Optional[str],
+    status: ExecutionNodeStatus,
+    output_preview: Any,
+    output_detail: Any,
+    metadata_updates: Optional[Dict[str, Any]] = None,
+) -> Optional[ExecutionObjectNode]:
+    node_id = _find_open_tool_node_id(
+        ctx,
+        execution_id=execution_id,
+        tool_name=tool_name,
+        parent_node_id=parent_node_id,
+    )
+    if not node_id:
+        return None
+
+    preview_text, preview_truncated = _budget_text(output_preview, limit=OUTPUT_PREVIEW_BUDGET)
+    detail_text, detail_truncated = _budget_text(output_detail, limit=OUTPUT_DETAIL_BUDGET)
+    truncated_fields = []
+    if preview_truncated:
+        truncated_fields.append("output_preview")
+    if detail_truncated:
+        truncated_fields.append("output_detail")
+    node = await update_execution_node(
+        ctx,
+        node_id,
+        status=status,
+        output_preview=preview_text,
+        output_detail=detail_text,
+        metadata_updates=metadata_updates,
+        truncated_fields=truncated_fields,
+    )
+
+    stack_key = _tool_stack_key(execution_id, tool_name, parent_node_id)
+    stack = ctx.open_tool_nodes.get(stack_key) or []
+    if stack and stack[-1] == node_id:
+        stack.pop()
+    return node
+
+
+async def append_tool_detail(
+    ctx: ConversationContext,
+    *,
+    execution_id: Optional[str],
+    tool_name: str,
+    parent_node_id: Optional[str],
+    detail: Any,
+) -> Optional[ExecutionObjectNode]:
+    node_id = _find_open_tool_node_id(
+        ctx,
+        execution_id=execution_id,
+        tool_name=tool_name,
+        parent_node_id=parent_node_id,
+    )
+    if not node_id:
+        return None
+
+    node = ctx.execution_node_index.get(node_id)
+    if node is None:
+        return None
+    merged_detail = "\n\n".join(part for part in [node.output_detail, _normalize_display_text(detail)] if part)
+    budgeted_detail, detail_truncated = _budget_text(merged_detail, limit=OUTPUT_DETAIL_BUDGET)
+    truncated_fields = ["output_detail"] if detail_truncated else []
+    return await update_execution_node(
+        ctx,
+        node_id,
+        output_detail=budgeted_detail,
+        truncated_fields=truncated_fields,
+    )
+
+
+async def ensure_thought_node(
+    ctx: ConversationContext,
+    *,
+    actor: ExecutionActor,
+    parent_node_id: Optional[str],
+) -> ExecutionObjectNode:
+    if ctx.active_thought_node_id and ctx.active_thought_node_id in ctx.execution_node_index:
+        node = ctx.execution_node_index[ctx.active_thought_node_id]
+        if node.parent_node_id == parent_node_id and node.actor == actor:
+            return node
+
+    node = await create_execution_node(
+        ctx,
+        node_type=ExecutionNodeType.LLM_THOUGHT,
+        title="LLM 思考",
+        status=ExecutionNodeStatus.RUNNING,
+        actor=actor,
+        parent_node_id=parent_node_id,
+        detail_text="",
+        output_detail="",
+    )
+    ctx.active_thought_node_id = node.node_id
+    return node
+
+
+async def append_thought(
+    ctx: ConversationContext,
+    *,
+    content: str,
+    actor: ExecutionActor,
+    parent_node_id: Optional[str],
+) -> None:
+    node = await ensure_thought_node(ctx, actor=actor, parent_node_id=parent_node_id)
+    merged = (node.detail_text or "") + content
+    budgeted, truncated = _budget_text(merged, limit=THOUGHT_DETAIL_BUDGET)
+    await update_execution_node(
+        ctx,
+        node.node_id,
+        detail_text=budgeted,
+        output_detail=budgeted,
+        truncated_fields=["detail_text", "output_detail"] if truncated else [],
+    )
+
+
+async def close_active_thought(ctx: ConversationContext, *, status: ExecutionNodeStatus) -> None:
+    node_id = ctx.active_thought_node_id
+    if not node_id:
+        return
+    await update_execution_node(ctx, node_id, status=status)
+    ctx.active_thought_node_id = None
+
+
+async def flush_buffered_thought(
+    ctx: ConversationContext,
+    *,
+    content: str,
+    actor: ExecutionActor,
+    parent_node_id: Optional[str],
+) -> None:
+    if not (content or "").strip():
+        return
+    await append_thought(
+        ctx,
+        content=content,
+        actor=actor,
+        parent_node_id=parent_node_id,
+    )
+    await close_active_thought(ctx, status=ExecutionNodeStatus.COMPLETED)
+
+
+async def create_system_state_node(
+    ctx: ConversationContext,
+    *,
+    title: str,
+    status: ExecutionNodeStatus,
+    actor: ExecutionActor,
+    parent_node_id: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> ExecutionObjectNode:
+    return await create_execution_node(
+        ctx,
+        node_type=ExecutionNodeType.SYSTEM_STATE,
+        title=title,
+        status=status,
+        actor=actor,
+        parent_node_id=parent_node_id,
+        detail_text=title,
+        metadata=metadata,
+    )
+
+
+async def create_question_node(
+    ctx: ConversationContext,
+    *,
+    question: str,
+    actor: ExecutionActor,
+    parent_node_id: Optional[str] = None,
+) -> ExecutionObjectNode:
+    return await create_execution_node(
+        ctx,
+        node_type=ExecutionNodeType.USER_QUESTION,
+        title="等待用户澄清",
+        status=ExecutionNodeStatus.WAITING,
+        actor=actor,
+        parent_node_id=parent_node_id,
+        detail_text=question,
+        output_detail=question,
+    )
+
+
+async def create_skill_node(
+    ctx: ConversationContext,
+    *,
+    execution_id: str,
+    actor: ExecutionActor,
+    skill_id: str,
+    skill_name: str,
+    reason: str = "",
+    parent_node_id: Optional[str] = None,
+) -> ExecutionObjectNode:
+    budgeted_reason, reason_truncated = _budget_text(reason, limit=DISPLAY_INPUT_BUDGET)
+    node = await create_execution_node(
+        ctx,
+        node_type=ExecutionNodeType.SKILL_CALL,
+        title=skill_name or skill_id or "Skill 调用",
+        status=ExecutionNodeStatus.RUNNING,
+        actor=actor,
+        parent_node_id=parent_node_id,
+        execution_id=execution_id,
+        skill_id=skill_id,
+        skill_name=skill_name,
+        reason=budgeted_reason,
+        display_input=budgeted_reason,
+        metadata={"skill_id": skill_id, "skill_name": skill_name},
+        truncated_fields=["display_input"] if reason_truncated else [],
+    )
+    return node
+
+
+async def emit_execution_event(
+    ctx: ConversationContext,
+    *,
+    execution_id: str,
+    actor: ExecutionActor,
+    phase: ExecutionPhase,
+    name: str,
+    status: ExecutionEventStatus,
+    display_text: str,
+    data: Optional[Dict[str, Any]] = None,
+    parent_execution_id: Optional[str] = None,
+) -> ExecutionEvent:
+    """Record and forward a structured execution-chain event."""
+    event = ExecutionEvent(
+        execution_id=execution_id,
+        actor=actor,
+        phase=phase,
+        name=name,
+        status=status,
+        display_text=display_text,
+        parent_execution_id=parent_execution_id,
+        data=data or {},
+    )
+    ctx.execution_events.append(event)
+
+    event_data = data or {}
+    tool_name = str(event_data.get("tool") or name or "")
+    parent_node_id = event_data.get("parent_node_id")
+
+    if tool_name and status in {ExecutionEventStatus.COMPLETED, ExecutionEventStatus.FAILED}:
+        await complete_tool_node(
+            ctx,
+            execution_id=execution_id,
+            tool_name=tool_name,
+            parent_node_id=parent_node_id or _tool_parent_node_id(ctx),
+            status=_map_event_status(status),
+            output_preview=event_data.get("output_preview") or display_text,
+            output_detail=event_data.get("output_detail") or event_data.get("detail") or display_text,
+            metadata_updates=event_data,
+        )
+
+    await ctx.ws_sender(
+        {
+            "type": "execution_event",
+            "event": event.model_dump(mode="json"),
+        }
+    )
+    return event
 
 
 # ── 主入口 ───────────────────────────────────────────────────────────────────
@@ -369,6 +913,7 @@ async def stream_message(
         conversation_manager=conversation_manager,
         conversation_has_draft=has_draft,
         last_skill_execution_summary=entry.last_skill_execution_summary,
+        clarification_context=list(entry.clarification_context),
     )
     if conv and conv.writing_state:
         ctx.current_module_id = conv.writing_state.module_id or None
@@ -385,8 +930,19 @@ async def stream_message(
         )
         streamed_text_buffer = ""
         streamed_thinking_buffer = ""
+        buffered_pre_skill_text = ""
         saw_tool_activity = False
         prefer_thinking_stream = _looks_like_writing_request(message)
+        await emit_execution_event(
+            ctx,
+            execution_id=ctx.orchestrator_execution_id,
+            actor=ExecutionActor.ORCHESTRATOR,
+            phase=ExecutionPhase.PLAN,
+            name="orchestrator_run",
+            status=ExecutionEventStatus.STARTED,
+            display_text="开始规划本轮处理路径",
+            data={"message": message},
+        )
 
         # ── 三层压缩策略（第二、三层）─────────────────────────────────────
         # 第二层：超过 COMPRESSION_ROUND_THRESHOLD 轮时裁剪早期事件
@@ -405,12 +961,17 @@ async def stream_message(
 
         # 运行 Agent，映射事件到 WebSocket 消息
         _TOOL_DISPLAY = {
-            "resolve_target_module": "定位目标模块",
-            "load_module_fact_sheet": "加载模块事实主档",
-            "get_fact_overview": "查询项目概览",
-            "get_fact_detail":   "查询详细信息",
+            "facts_list_modules": "查询模块清单",
+            "facts_get_module": "加载模块事实主档",
+            "prototypes_list_pages": "查询原型页面清单",
+            "prototypes_get_page": "加载原型页面详情",
+            "docs_list_saved": "查询历史文档",
+            "docs_load_saved": "加载历史版本",
+            "artifacts_read_file": "读取本地文件",
+            "artifacts_write_file": "写入本地文件",
             "execute_skill":     "执行写作 Skill",
             "ask_user":          "向用户确认",
+            "thought":           "兼容本地模型误调用",
         }
 
         async for event in runner.run_async(
@@ -423,18 +984,79 @@ async def stream_message(
             func_calls = event.get_function_calls()
             if func_calls:
                 saw_tool_activity = True
+                if buffered_pre_skill_text.strip():
+                    await flush_buffered_thought(
+                        ctx,
+                        content=buffered_pre_skill_text,
+                        actor=ExecutionActor.ORCHESTRATOR,
+                        parent_node_id=None,
+                    )
+                    yield {"type": "thinking", "content": buffered_pre_skill_text}
+                    streamed_thinking_buffer = ""
+                    buffered_pre_skill_text = ""
+                await close_active_thought(ctx, status=ExecutionNodeStatus.COMPLETED)
                 for fc in func_calls:
                     tool_name = fc.name
                     if tool_name == "execute_skill":
                         skill_id = (fc.args or {}).get("skill_id", "")
+                        user_intent = (fc.args or {}).get("user_intent", "")
                         if skill_id:
                             ctx.selected_skill_id = skill_id
+                        skill_node = await create_skill_node(
+                            ctx,
+                            execution_id="",
+                            actor=ExecutionActor.ORCHESTRATOR,
+                            skill_id=skill_id,
+                            skill_name=skill_id or "未命名 Skill",
+                            reason=user_intent,
+                            parent_node_id=None,
+                        )
+                        ctx.current_skill_node_id = skill_node.node_id
+                        await emit_execution_event(
+                            ctx,
+                            execution_id=ctx.orchestrator_execution_id,
+                            actor=ExecutionActor.ORCHESTRATOR,
+                            phase=ExecutionPhase.DELEGATE,
+                            name="execute_skill",
+                            status=ExecutionEventStatus.STARTED,
+                            display_text=f"委派 Skill：{skill_id or '未命名 Skill'}",
+                            data={
+                                "tool": tool_name,
+                                "skill_id": skill_id,
+                                "node_id": skill_node.node_id,
+                                "parent_node_id": None,
+                            },
+                        )
                         yield {
                             "type": "skill_start",
                             "skill_id": skill_id,
                             "content": f"技能调用：{skill_id}" if skill_id else "执行写作",
                         }
                     else:
+                        tool_node = await start_tool_node(
+                            ctx,
+                            execution_id=ctx.current_execution_id or ctx.orchestrator_execution_id,
+                            actor=ExecutionActor.SUBAGENT if ctx.current_execution_id else ExecutionActor.ORCHESTRATOR,
+                            tool_name=tool_name,
+                            title=_TOOL_DISPLAY.get(tool_name, f"调用：{tool_name}"),
+                            params=fc.args or {},
+                            parent_node_id=_tool_parent_node_id(ctx),
+                            skill_id=ctx.selected_skill_id,
+                        )
+                        await emit_execution_event(
+                            ctx,
+                            execution_id=ctx.orchestrator_execution_id,
+                            actor=ExecutionActor.ORCHESTRATOR,
+                            phase=ExecutionPhase.RESOURCE,
+                            name=tool_name,
+                            status=ExecutionEventStatus.STARTED,
+                            display_text=_TOOL_DISPLAY.get(tool_name, f"调用：{tool_name}"),
+                            data={
+                                "tool": tool_name,
+                                "node_id": tool_node.node_id,
+                                "parent_node_id": _tool_parent_node_id(ctx),
+                            },
+                        )
                         yield {
                             "type": "status",
                             "sub": "tool_call",
@@ -453,12 +1075,23 @@ async def stream_message(
             if event.partial and event.content:
                 if not ctx.draft_updated:
                     partial_text = _extract_text_from_content(event.content)
-                    if prefer_thinking_stream:
+                    if prefer_thinking_stream and not ctx.selected_skill_id:
+                        _delta, buffered_pre_skill_text = _compute_stream_delta(
+                            buffered_pre_skill_text,
+                            partial_text,
+                        )
+                    elif prefer_thinking_stream:
                         delta, streamed_thinking_buffer = _compute_stream_delta(
                             streamed_thinking_buffer,
                             partial_text,
                         )
                         if delta.strip():
+                            await append_thought(
+                                ctx,
+                                content=delta,
+                                actor=ExecutionActor.ORCHESTRATOR,
+                                parent_node_id=None,
+                            )
                             yield {"type": "thinking", "content": delta}
                     else:
                         delta, streamed_text_buffer = _compute_stream_delta(
@@ -470,6 +1103,14 @@ async def stream_message(
 
             # --- 错误事件 → error ---
             if event.error_code or event.error_message:
+                await create_system_state_node(
+                    ctx,
+                    title=event.error_message or f"错误码: {event.error_code}",
+                    status=ExecutionNodeStatus.FAILED,
+                    actor=ExecutionActor.RUNTIME,
+                    parent_node_id=None,
+                    metadata={"error_code": event.error_code},
+                )
                 yield {
                     "type": "error",
                     "content": event.error_message or f"错误码: {event.error_code}",
@@ -480,14 +1121,43 @@ async def stream_message(
                 # 提取最终响应文本（纯对话回复场景，无 Skill 写作）
                 if not ctx.draft_updated and event.content:
                     final_text = _extract_text_from_content(event.content)
-                    if ctx.selected_skill_id or prefer_thinking_stream:
+                    final_channel = _final_response_channel(
+                        draft_updated=ctx.draft_updated,
+                        selected_skill_id=ctx.selected_skill_id,
+                        prefer_thinking_stream=prefer_thinking_stream,
+                    )
+                    if final_channel == "thinking":
+                        if buffered_pre_skill_text.strip():
+                            await flush_buffered_thought(
+                                ctx,
+                                content=buffered_pre_skill_text,
+                                actor=ExecutionActor.ORCHESTRATOR,
+                                parent_node_id=None,
+                            )
+                            yield {"type": "thinking", "content": buffered_pre_skill_text}
+                            streamed_thinking_buffer = ""
+                            buffered_pre_skill_text = ""
                         delta, streamed_thinking_buffer = _compute_stream_delta(
                             streamed_thinking_buffer,
                             final_text,
                         )
                         if delta.strip():
+                            await append_thought(
+                                ctx,
+                                content=delta,
+                                actor=ExecutionActor.ORCHESTRATOR,
+                                parent_node_id=None,
+                            )
                             yield {"type": "thinking", "content": delta}
-                    else:
+                    elif final_channel == "text":
+                        if buffered_pre_skill_text.strip():
+                            delta, streamed_text_buffer = _compute_stream_delta(
+                                streamed_text_buffer,
+                                buffered_pre_skill_text,
+                            )
+                            if delta.strip():
+                                yield {"type": "text", "content": delta}
+                            buffered_pre_skill_text = ""
                         delta, streamed_text_buffer = _compute_stream_delta(
                             streamed_text_buffer,
                             final_text,
@@ -520,6 +1190,24 @@ async def stream_message(
                 final_usage = ctx.llm_usage or adk_usage
                 final_skill_id = state_skill_id or ctx.selected_skill_id
 
+                await close_active_thought(ctx, status=ExecutionNodeStatus.COMPLETED)
+                await emit_execution_event(
+                    ctx,
+                    execution_id=ctx.orchestrator_execution_id,
+                    actor=ExecutionActor.ORCHESTRATOR,
+                    phase=ExecutionPhase.COMPLETE,
+                    name="orchestrator_run",
+                    status=ExecutionEventStatus.COMPLETED,
+                    display_text="本轮处理完成",
+                    data={"skill_id": final_skill_id, "has_draft": ctx.draft_updated},
+                )
+                await create_system_state_node(
+                    ctx,
+                    title="本轮处理完成",
+                    status=ExecutionNodeStatus.COMPLETED,
+                    actor=ExecutionActor.ORCHESTRATOR,
+                    metadata={"skill_id": final_skill_id, "has_draft": ctx.draft_updated},
+                )
                 yield {
                     "type": "done",
                     "skill_id": final_skill_id,
@@ -541,6 +1229,32 @@ async def stream_message(
                     "writing_state_update": (
                         "draft_only" if (ctx.draft_updated and has_draft) else None
                     ),
+                    "skill_execution": (
+                        ctx.latest_skill_execution_result.model_dump(mode="json")
+                        if ctx.latest_skill_execution_result
+                        else None
+                    ),
+                    "execution_events": [
+                        event.model_dump(mode="json")
+                        for event in ctx.execution_events
+                    ],
+                    "execution_nodes": [
+                        node.model_dump(mode="json")
+                        for node in ctx.execution_nodes
+                    ],
+                    "state_snapshot": (
+                        {
+                            "writing_state": {
+                                "module_id": state_module_id,
+                                "module_name": state_module_name,
+                                "skill_id": final_skill_id or "",
+                                "doc_type": state_doc_type,
+                                "has_draft": bool(state_draft),
+                            }
+                        }
+                        if ctx.draft_updated
+                        else None
+                    ),
                 }
 
         # 更新轮次计数，并将本轮 Skill 执行摘要持久化到 entry 供下轮使用
@@ -548,9 +1262,28 @@ async def stream_message(
         entry.last_active_at = time.time()
         if ctx.last_skill_execution_summary:
             entry.last_skill_execution_summary = ctx.last_skill_execution_summary
+        entry.clarification_context = list(ctx.clarification_context)
 
     except Exception as e:
         logger.error(f"stream_message 运行出错: {e}", exc_info=True)
+        await close_active_thought(ctx, status=ExecutionNodeStatus.FAILED)
+        await emit_execution_event(
+            ctx,
+            execution_id=ctx.orchestrator_execution_id,
+            actor=ExecutionActor.ORCHESTRATOR,
+            phase=ExecutionPhase.COMPLETE,
+            name="orchestrator_run",
+            status=ExecutionEventStatus.FAILED,
+            display_text=_format_stream_error(e),
+            data={"error": str(e)},
+        )
+        await create_system_state_node(
+            ctx,
+            title=_format_stream_error(e),
+            status=ExecutionNodeStatus.FAILED,
+            actor=ExecutionActor.ORCHESTRATOR,
+            metadata={"error": str(e)},
+        )
         yield {"type": "error", "content": _format_stream_error(e)}
 
     finally:
