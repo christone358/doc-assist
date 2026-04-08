@@ -11,6 +11,7 @@ Sub-agent 使用独立 InMemorySessionService，ReAct 历史不写入主 Agent s
 """
 
 import logging
+import json
 import re
 import uuid
 from typing import TYPE_CHECKING, List
@@ -18,7 +19,6 @@ from typing import TYPE_CHECKING, List
 try:
     from google.adk.agents import LlmAgent
     from google.adk.agents.run_config import RunConfig, StreamingMode
-    from google.adk.models.lite_llm import LiteLlm
     from google.adk.runners import Runner
     from google.adk.sessions import InMemorySessionService
     from google.adk.tools import ToolContext
@@ -33,10 +33,6 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for unit tests
 
     class StreamingMode:  # type: ignore[override]
         SSE = "SSE"
-
-    class LiteLlm:  # type: ignore[override]
-        def __init__(self, *args, **kwargs):
-            pass
 
     class Runner:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -67,6 +63,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_HALLUCINATED_TOOL_NAMES = {"thought", "thinking", "reflection"}
+_HALLUCINATED_TOOL_PREFIX_RE = re.compile(
+    r'^\s*\{\s*"name"\s*:\s*"(thought|thinking|reflection)"',
+    re.IGNORECASE,
+)
+
 
 def _extract_text_from_event(event) -> str:
     if not event.content:
@@ -76,7 +78,53 @@ def _extract_text_from_event(event) -> str:
         text = getattr(part, "text", None)
         if text:
             parts.append(text)
-    return "".join(parts)
+    return _strip_leading_hallucinated_tool_calls("".join(parts))
+
+
+def _strip_leading_hallucinated_tool_calls(text: str) -> str:
+    if not text:
+        return ""
+
+    stripped = text.lstrip()
+    if not stripped.startswith("{"):
+        return text
+
+    decoder = json.JSONDecoder()
+    idx = 0
+    consumed_any = False
+
+    while idx < len(stripped):
+        while idx < len(stripped) and stripped[idx].isspace():
+            idx += 1
+        if idx >= len(stripped):
+            break
+        if stripped[idx] != "{":
+            break
+
+        try:
+            obj, end = decoder.raw_decode(stripped, idx)
+        except json.JSONDecodeError:
+            if consumed_any or _HALLUCINATED_TOOL_PREFIX_RE.match(stripped):
+                return ""
+            return text
+
+        if not isinstance(obj, dict):
+            break
+
+        tool_name = str(obj.get("name") or "").strip().lower()
+        arguments = obj.get("arguments")
+        if tool_name not in _HALLUCINATED_TOOL_NAMES:
+            break
+        if arguments is not None and not isinstance(arguments, dict):
+            break
+
+        consumed_any = True
+        idx = end
+
+    if not consumed_any:
+        return text
+
+    return stripped[idx:].lstrip()
 
 
 def _compute_stream_delta(previous_text: str, incoming_text: str) -> tuple[str, str]:
@@ -151,6 +199,7 @@ async def _generate_context_summary(
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
         max_tokens=220,
+        **llm_config.request_kwargs,
     )
     return (response.choices[0].message.content or "").strip()
 
@@ -196,6 +245,7 @@ def _build_skill_subagent(
         LlmAgent 实例。
     """
     from agent.adk.prompt_loader import load_prompt_template
+    from agent.adk.llm_adapter import build_adk_litellm_model
     from agent.adk.thought_tool import create_thought_tool, should_enable_thought_tool
     from agent.adk.tool_catalog import (
         build_skill_subagent_tool_view,
@@ -218,11 +268,7 @@ def _build_skill_subagent(
 
     agent = LlmAgent(
         name=f"doc_worker_{skill.id.replace('-', '_')}",
-        model=LiteLlm(
-            model=llm_config.model,
-            api_key=llm_config.api_key,
-            api_base=llm_config.api_base,
-        ),
+        model=build_adk_litellm_model(llm_config),
         instruction=instruction,
         tools=tools,
     )

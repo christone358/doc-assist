@@ -9,7 +9,7 @@
 
   let form = emptyForm();
   function emptyForm() {
-    return { name: '', provider: 'deepseek', model_name: '', api_base: '', api_key: '', temperature: 0.7, max_tokens: 4096, top_p: 0.9, is_default: false };
+    return { name: '', provider: 'deepseek', model_name: '', api_base: '', api_key: '', temperature: 0.7, max_tokens: 4096, top_p: 0.9, reasoning_mode: 'default', is_default: false };
   }
 
   onMount(async () => { await refresh(); });
@@ -60,7 +60,12 @@
     finally { testing = null; }
   }
 
-  const providerLabels = { deepseek: 'DeepSeek', qwen: 'QWen', ollama: 'Ollama（本地）' };
+  const providerLabels = { deepseek: 'DeepSeek', qwen: 'QWen', ollama: '本地模型（vLLM/Ollama）' };
+  const reasoningLabels = {
+    default: '默认推理',
+    thinking: '思考模式',
+    'non-thinking': '非思考模式',
+  };
   const providerPresets = {
     deepseek: {
       modelName: 'deepseek-chat',
@@ -123,6 +128,8 @@
                   <span class="key-display">{cfg.api_key_masked}</span>
                   <span class="meta-sep">·</span>
                   <span>温度 {cfg.temperature}</span>
+                  <span class="meta-sep">·</span>
+                  <span>{reasoningLabels[cfg.reasoning_mode] || '默认推理'}</span>
                 </div>
               </div>
             </div>
@@ -179,7 +186,7 @@
         <select id="llm-config-provider" bind:value={form.provider}>
           <option value="deepseek">DeepSeek</option>
           <option value="qwen">QWen（通义千问）</option>
-          <option value="ollama">Ollama（本地模型）</option>
+          <option value="ollama">本地模型（vLLM/Ollama）</option>
         </select>
       </div>
       <div class="form-group">
@@ -196,17 +203,33 @@
       <div class="form-group">
         <label for="llm-config-api-key">
           API 令牌
-          {#if !editingId}<span class="required">*</span>{/if}
+          {#if !editingId && form.provider !== 'ollama'}<span class="required">*</span>{/if}
           {#if editingId}<span class="label-hint">（留空保持不变）</span>{/if}
         </label>
-        <input id="llm-config-api-key" type="password" bind:value={form.api_key} placeholder="sk-..." />
+        <input id="llm-config-api-key" type="password" bind:value={form.api_key} placeholder={form.provider === 'ollama' ? '本地服务通常可留空' : 'sk-...'} />
+        {#if form.provider === 'ollama'}
+          <div class="field-hint">使用本地 vLLM 或 Ollama 的 OpenAI 兼容接口时，通常不需要填写 API 令牌。</div>
+        {/if}
       </div>
       <details class="advanced-wrap">
         <summary>高级参数</summary>
         <div class="form-row">
           <div class="form-group"><label for="llm-config-temperature">温度 (0–2)</label><input id="llm-config-temperature" type="number" min="0" max="2" step="0.1" bind:value={form.temperature} /></div>
-          <div class="form-group"><label for="llm-config-max-tokens">最大令牌数</label><input id="llm-config-max-tokens" type="number" min="256" max="32768" bind:value={form.max_tokens} /></div>
+          <div class="form-group">
+            <label for="llm-config-max-tokens">最大输出令牌数</label>
+            <input id="llm-config-max-tokens" type="number" min="256" max="32768" bind:value={form.max_tokens} />
+            <div class="field-hint">限制单次回复最多生成多少 tokens，不等于模型的上下文窗口大小。</div>
+          </div>
           <div class="form-group"><label for="llm-config-top-p">Top-P (0–1)</label><input id="llm-config-top-p" type="number" min="0" max="1" step="0.05" bind:value={form.top_p} /></div>
+        </div>
+        <div class="form-group">
+          <label for="llm-config-reasoning-mode">推理模式</label>
+          <select id="llm-config-reasoning-mode" bind:value={form.reasoning_mode}>
+            <option value="default">默认</option>
+            <option value="thinking">思考模式</option>
+            <option value="non-thinking">非思考模式</option>
+          </select>
+          <div class="field-hint">推荐将 Qwen3.5 的编排模型设为“非思考模式”，减少工具调用时输出额外思考文本。</div>
         </div>
       </details>
       <label class="checkbox-label">

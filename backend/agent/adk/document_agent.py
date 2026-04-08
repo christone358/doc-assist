@@ -16,7 +16,6 @@ import logging
 from typing import List, TYPE_CHECKING
 
 from google.adk.agents import LlmAgent
-from google.adk.models.lite_llm import LiteLlm
 from agent.adk.prompt_loader import load_prompt_template
 from agent.adk.thought_tool import create_thought_tool, should_enable_thought_tool
 from agent.adk.tool_catalog import build_main_agent_tool_view, render_tool_section
@@ -34,7 +33,10 @@ def build_document_agent(
     has_draft: bool,
     has_saved: bool = False,
 ) -> LlmAgent:
-    from agent.adk.llm_adapter import get_litellm_model_config
+    from agent.adk.llm_adapter import (
+        build_adk_litellm_model,
+        get_litellm_model_config,
+    )
 
     llm_config = get_litellm_model_config()
     if llm_config is None:
@@ -69,11 +71,7 @@ def build_document_agent(
 
     agent = LlmAgent(
         name="document_orchestrator",
-        model=LiteLlm(
-            model=llm_config.model,
-            api_key=llm_config.api_key,
-            api_base=llm_config.api_base,
-        ),
+        model=build_adk_litellm_model(llm_config),
         instruction=instruction,
         tools=tools,
     )

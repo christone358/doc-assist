@@ -6,6 +6,10 @@ from agent.adk.runner_adapter import (
     _extract_text_from_content,
     _final_response_channel,
     _format_stream_error,
+    _is_simple_greeting,
+    _looks_like_hallucinated_tool_payload,
+    _simple_greeting_reply,
+    _strip_leading_hallucinated_tool_calls,
     ConversationContext,
     emit_execution_event,
 )
@@ -89,6 +93,47 @@ def test_extract_text_from_content_joins_parts():
     content = Content([Part("你好"), Part("，"), Part("世界")])
 
     assert _extract_text_from_content(content) == "你好，世界"
+
+
+def test_strip_leading_hallucinated_tool_calls_removes_local_model_leak():
+    leaked = (
+        '{"name":"thought","arguments":{}}'
+        '{"name":"thought","arguments":{"thought":"内部推理"}}'
+        "你好，我可以帮你做什么？"
+    )
+
+    assert _strip_leading_hallucinated_tool_calls(leaked) == "你好，我可以帮你做什么？"
+
+
+def test_strip_leading_hallucinated_tool_calls_drops_only_leaked_payload():
+    leaked_only = (
+        '{"name":"thought","arguments":{}}'
+        '{"name":"reflection","arguments":{"thought":"内部推理"}}'
+    )
+
+    assert _strip_leading_hallucinated_tool_calls(leaked_only) == ""
+
+
+def test_strip_leading_hallucinated_tool_calls_keeps_regular_json_text():
+    regular_json = '{"name":"asset","arguments":{"id":"A-1"}}'
+
+    assert _strip_leading_hallucinated_tool_calls(regular_json) == regular_json
+
+
+def test_looks_like_hallucinated_tool_payload_matches_thought_json():
+    leaked = '{"name":"thought","arguments":{"thought":"内部推理"}}'
+
+    assert _looks_like_hallucinated_tool_payload(leaked) is True
+
+
+def test_is_simple_greeting_matches_hello():
+    assert _is_simple_greeting("你好") is True
+    assert _is_simple_greeting("Hello!") is True
+    assert _simple_greeting_reply().startswith("你好，我在。")
+
+
+def test_is_simple_greeting_rejects_real_request():
+    assert _is_simple_greeting("你好，帮我写用户手册") is False
 
 
 @pytest.mark.asyncio

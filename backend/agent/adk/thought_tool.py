@@ -11,8 +11,9 @@ logger = logging.getLogger(__name__)
 
 def should_enable_thought_tool(llm_config) -> bool:
     """Enable the compatibility shim only for Ollama-backed models."""
+    provider = str(getattr(llm_config, "provider", "") or "").strip().lower()
     model = str(getattr(llm_config, "model", "") or "").strip().lower()
-    return model.startswith("ollama/")
+    return provider == "ollama" or model.startswith("ollama/")
 
 
 def create_thought_tool():

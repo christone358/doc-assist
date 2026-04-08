@@ -7,7 +7,14 @@ from pydantic import BaseModel
 from typing import Optional, List
 import uuid
 
-from llm.service import LLMConfig, LLMProvider, LLMConfigManager, _encrypt_key, _decrypt_key
+from llm.service import (
+    LLMConfig,
+    LLMProvider,
+    LLMConfigManager,
+    _encrypt_key,
+    _decrypt_key,
+    normalize_reasoning_mode,
+)
 
 router = APIRouter(prefix="/api/v1/llm", tags=["LLM Configuration"])
 _manager = LLMConfigManager.get_instance()
@@ -22,17 +29,21 @@ class LLMConfigCreate(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 4096
     top_p: float = 0.9
+    reasoning_mode: str = "default"
     is_default: bool = False
 
 
 class LLMConfigUpdate(BaseModel):
     name: Optional[str] = None
+    provider: Optional[LLMProvider] = None
     model_name: Optional[str] = None
     api_base: Optional[str] = None
     api_key: Optional[str] = None   # If provided, update the key
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     top_p: Optional[float] = None
+    reasoning_mode: Optional[str] = None
+    is_default: Optional[bool] = None
     is_active: Optional[bool] = None
 
 
@@ -47,6 +58,7 @@ class LLMConfigView(BaseModel):
     temperature: float
     max_tokens: int
     top_p: float
+    reasoning_mode: str
     is_default: bool
     is_active: bool
 
@@ -77,12 +89,13 @@ async def list_configs():
             provider=_provider_value(c.provider),
             model_name=c.model_name,
             api_base=c.api_base,
-            api_key_masked=_mask_key(c.api_key_encrypted),
-            temperature=c.temperature,
-            max_tokens=c.max_tokens,
-            top_p=c.top_p,
-            is_default=c.is_default,
-            is_active=c.is_active,
+        api_key_masked=_mask_key(c.api_key_encrypted),
+        temperature=c.temperature,
+        max_tokens=c.max_tokens,
+        top_p=c.top_p,
+        reasoning_mode=normalize_reasoning_mode(c.reasoning_mode),
+        is_default=c.is_default,
+        is_active=c.is_active,
         )
         for c in _manager.list_all()
     ]
@@ -101,6 +114,7 @@ async def create_config(body: LLMConfigCreate):
         temperature=body.temperature,
         max_tokens=body.max_tokens,
         top_p=body.top_p,
+        reasoning_mode=normalize_reasoning_mode(body.reasoning_mode),
         is_default=body.is_default,
         is_active=True,
     )
@@ -121,6 +135,7 @@ async def create_config(body: LLMConfigCreate):
         temperature=config.temperature,
         max_tokens=config.max_tokens,
         top_p=config.top_p,
+        reasoning_mode=normalize_reasoning_mode(config.reasoning_mode),
         is_default=config.is_default,
         is_active=config.is_active,
     )
@@ -135,6 +150,8 @@ async def update_config(config_id: str, body: LLMConfigUpdate):
 
     if body.name is not None:
         config.name = body.name
+    if body.provider is not None:
+        config.provider = body.provider
     if body.model_name is not None:
         config.model_name = body.model_name
     if body.api_base is not None:
@@ -147,6 +164,14 @@ async def update_config(config_id: str, body: LLMConfigUpdate):
         config.max_tokens = body.max_tokens
     if body.top_p is not None:
         config.top_p = body.top_p
+    if body.reasoning_mode is not None:
+        config.reasoning_mode = normalize_reasoning_mode(body.reasoning_mode)
+    if body.is_default is not None:
+        if body.is_default:
+            for existing in _manager.list_all():
+                existing.is_default = existing.id == config_id
+        else:
+            config.is_default = False
     if body.is_active is not None:
         config.is_active = body.is_active
 
@@ -161,6 +186,7 @@ async def update_config(config_id: str, body: LLMConfigUpdate):
         temperature=config.temperature,
         max_tokens=config.max_tokens,
         top_p=config.top_p,
+        reasoning_mode=normalize_reasoning_mode(config.reasoning_mode),
         is_default=config.is_default,
         is_active=config.is_active,
     )

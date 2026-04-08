@@ -201,8 +201,10 @@ def create_write_document_tool(ctx: "ConversationContext", skills_map: Dict[str,
                 api_base=llm_config.api_base,
                 temperature=llm_config.temperature,
                 max_tokens=llm_config.max_tokens,
+                top_p=llm_config.top_p,
                 stream=True,
                 stream_options={"include_usage": True},
+                **llm_config.request_kwargs,
             )
 
             async for chunk in response:

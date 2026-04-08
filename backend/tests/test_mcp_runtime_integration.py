@@ -249,7 +249,14 @@ def test_build_document_agent_registers_mcp_public_tools(monkeypatch):
     monkeypatch.setattr(
         llm_adapter,
         "get_litellm_model_config",
-        lambda: SimpleNamespace(model="mock-model", api_key="k", api_base="http://llm"),
+        lambda: SimpleNamespace(
+            model="mock-model",
+            api_key="k",
+            api_base="http://llm",
+            temperature=0.3,
+            max_tokens=1024,
+            top_p=0.85,
+        ),
     )
 
     ctx = _make_conversation_ctx()
@@ -282,6 +289,9 @@ def test_build_document_agent_registers_mcp_public_tools(monkeypatch):
     assert "get_current_draft" not in agent.instruction
     assert "load_saved_document" not in agent.instruction
     assert "get_fact_overview" not in agent.instruction
+    assert agent.model.temperature == 0.3
+    assert agent.model.max_tokens == 1024
+    assert agent.model.top_p == 0.85
 
 
 def test_build_document_agent_adds_thought_compat_tool_for_ollama(monkeypatch):
@@ -290,7 +300,14 @@ def test_build_document_agent_adds_thought_compat_tool_for_ollama(monkeypatch):
     monkeypatch.setattr(
         llm_adapter,
         "get_litellm_model_config",
-        lambda: SimpleNamespace(model="ollama/mock-local", api_key="k", api_base="http://llm"),
+        lambda: SimpleNamespace(
+            model="ollama/mock-local",
+            api_key="k",
+            api_base="http://llm",
+            temperature=0.2,
+            max_tokens=768,
+            top_p=0.9,
+        ),
     )
 
     ctx = _make_conversation_ctx()
@@ -319,7 +336,14 @@ def test_build_skill_subagent_registers_mcp_tools(monkeypatch):
     agent = execute_skill_tool._build_skill_subagent(
         skill,
         sub_ctx,
-        SimpleNamespace(model="mock-model", api_key="k", api_base="http://llm"),
+        SimpleNamespace(
+            model="mock-model",
+            api_key="k",
+            api_base="http://llm",
+            temperature=0.4,
+            max_tokens=1536,
+            top_p=0.88,
+        ),
     )
     tool_names = [tool.__name__ for tool in agent.tools]
 
@@ -343,6 +367,9 @@ def test_build_skill_subagent_registers_mcp_tools(monkeypatch):
     assert "get_current_draft" in agent.instruction
     assert "resolve_target_module" not in agent.instruction
     assert "load_saved_document" not in agent.instruction
+    assert agent.model.temperature == 0.4
+    assert agent.model.max_tokens == 1536
+    assert agent.model.top_p == 0.88
 
 
 def test_build_skill_subagent_adds_thought_compat_tool_for_ollama(monkeypatch):
@@ -363,7 +390,14 @@ def test_build_skill_subagent_adds_thought_compat_tool_for_ollama(monkeypatch):
     agent = execute_skill_tool._build_skill_subagent(
         skill,
         sub_ctx,
-        SimpleNamespace(model="ollama/mock-local", api_key="k", api_base="http://llm"),
+        SimpleNamespace(
+            model="ollama/mock-local",
+            api_key="k",
+            api_base="http://llm",
+            temperature=0.2,
+            max_tokens=1024,
+            top_p=0.9,
+        ),
     )
     tool_names = [tool.__name__ for tool in agent.tools]
 
@@ -383,6 +417,7 @@ def test_real_skill_resources_and_saved_docs_flow_into_write_document_prompt(tmp
             api_base="http://llm",
             temperature=0.1,
             max_tokens=256,
+            top_p=0.75,
         ),
     )
 
@@ -461,6 +496,7 @@ def test_real_skill_resources_and_saved_docs_flow_into_write_document_prompt(tmp
     assert "正式版本正文" in prompt
     assert "## 功能描述" in prompt
     assert structure_source[:80].strip() in prompt
+    assert captured_calls[0]["top_p"] == 0.75
     assert tool_context.state["draft_content"] == "第一段第二段"
     assert summary.startswith("文档已生成，共")
 
@@ -477,6 +513,7 @@ def test_write_document_prefers_unsaved_draft_over_loaded_saved_doc(tmp_path, mo
             api_base="http://llm",
             temperature=0.1,
             max_tokens=256,
+            top_p=0.7,
         ),
     )
 

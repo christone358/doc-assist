@@ -15,6 +15,7 @@ Runner 适配层 - 将 ADK Runner 事件流转换为 WebSocket 消息格式。
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -74,6 +75,12 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for unit tests
 
 logger = logging.getLogger(__name__)
 
+_HALLUCINATED_TOOL_NAMES = {"thought", "thinking", "reflection"}
+_HALLUCINATED_TOOL_PREFIX_RE = re.compile(
+    r'^\s*\{\s*"name"\s*:\s*"(thought|thinking|reflection)"',
+    re.IGNORECASE,
+)
+
 # ── 压缩策略常量 ─────────────────────────────────────────────────────────────
 SESSION_TTL_SECONDS = 4 * 3600          # session 最长闲置时间（4 小时）
 COMPRESSION_ROUND_THRESHOLD = 6         # 第二层：超过此轮次触发早期事件裁剪
@@ -84,6 +91,8 @@ DISPLAY_INPUT_BUDGET = 500
 OUTPUT_PREVIEW_BUDGET = 800
 OUTPUT_DETAIL_BUDGET = 2400
 THOUGHT_DETAIL_BUDGET = 3200
+THOUGHT_TOOL_LOOP_LIMIT = 2
+HALLUCINATED_TEXT_LOOP_LIMIT = 2
 
 # ── 全局活跃上下文表：conversation_id → ConversationContext ─────────────────
 # 用于 ask_user 场景下：用户回复直接投入等待中的队列
@@ -138,7 +147,89 @@ def _extract_text_from_content(content: Any) -> str:
         text = getattr(part, "text", None)
         if text:
             chunks.append(text)
+    return _strip_leading_hallucinated_tool_calls("".join(chunks))
+
+
+def _extract_raw_text_from_content(content: Any) -> str:
+    if not content:
+        return ""
+    chunks: List[str] = []
+    for part in content.parts or []:
+        text = getattr(part, "text", None)
+        if text:
+            chunks.append(text)
     return "".join(chunks)
+
+
+def _strip_leading_hallucinated_tool_calls(text: str) -> str:
+    """Drop leaked pseudo tool-call JSON emitted as plain assistant text.
+
+    Some local models output concatenated objects such as
+    ``{"name":"thought","arguments":{...}}`` instead of using the actual
+    function-call channel. When that happens we should hide the leaked payload
+    and only keep the real user-facing answer that follows, if any.
+    """
+    if not text:
+        return ""
+
+    stripped = text.lstrip()
+    if not stripped.startswith("{"):
+        return text
+
+    decoder = json.JSONDecoder()
+    idx = 0
+    consumed_any = False
+
+    while idx < len(stripped):
+        while idx < len(stripped) and stripped[idx].isspace():
+            idx += 1
+        if idx >= len(stripped):
+            break
+        if stripped[idx] != "{":
+            break
+
+        try:
+            obj, end = decoder.raw_decode(stripped, idx)
+        except json.JSONDecodeError:
+            if consumed_any or _HALLUCINATED_TOOL_PREFIX_RE.match(stripped):
+                return ""
+            return text
+
+        if not isinstance(obj, dict):
+            break
+
+        tool_name = str(obj.get("name") or "").strip().lower()
+        arguments = obj.get("arguments")
+        if tool_name not in _HALLUCINATED_TOOL_NAMES:
+            break
+        if arguments is not None and not isinstance(arguments, dict):
+            break
+
+        consumed_any = True
+        idx = end
+
+    if not consumed_any:
+        return text
+
+    remainder = stripped[idx:].lstrip()
+    return remainder
+
+
+def _looks_like_hallucinated_tool_payload(text: str) -> bool:
+    return bool(_HALLUCINATED_TOOL_PREFIX_RE.match((text or "").lstrip()))
+
+
+def _is_simple_greeting(message: str) -> bool:
+    text = (message or "").strip().lower()
+    if not text:
+        return False
+    return bool(
+        re.fullmatch(r"(你好|您好|嗨|哈喽|hello|hi|hey)[!！,.，。?？~～\s]*", text)
+    )
+
+
+def _simple_greeting_reply() -> str:
+    return "你好，我在。请直接告诉我你想查询什么，或者要我写什么文档。"
 
 
 def _compute_stream_delta(previous_text: str, incoming_text: str) -> tuple[str, str]:
@@ -194,6 +285,58 @@ def _looks_like_writing_request(message: str) -> bool:
         "manual", "document", "doc",
     )
     return any(keyword in text for keyword in writing_keywords)
+
+
+async def _yield_loop_guard_completion(
+    ctx: "ConversationContext",
+    *,
+    reason: str,
+    fallback_text: str,
+) -> AsyncIterator[dict]:
+    await close_active_thought(ctx, status=ExecutionNodeStatus.FAILED)
+    await emit_execution_event(
+        ctx,
+        execution_id=ctx.orchestrator_execution_id,
+        actor=ExecutionActor.ORCHESTRATOR,
+        phase=ExecutionPhase.COMPLETE,
+        name="orchestrator_run",
+        status=ExecutionEventStatus.FAILED,
+        display_text=reason,
+        data={"loop_guard": True, "reason": reason},
+    )
+    await create_system_state_node(
+        ctx,
+        title=reason,
+        status=ExecutionNodeStatus.FAILED,
+        actor=ExecutionActor.ORCHESTRATOR,
+        metadata={"loop_guard": True},
+    )
+    yield {"type": "text", "content": fallback_text}
+    yield {
+        "type": "done",
+        "skill_id": ctx.selected_skill_id,
+        "skill_name": ctx.selected_skill_name,
+        "skill_reason": ctx.skill_reason,
+        "usage": ctx.llm_usage,
+        "has_draft": False,
+        "draft_content": None,
+        "writing_state_data": None,
+        "writing_state_update": None,
+        "skill_execution": (
+            ctx.latest_skill_execution_result.model_dump(mode="json")
+            if ctx.latest_skill_execution_result
+            else None
+        ),
+        "execution_events": [
+            event.model_dump(mode="json")
+            for event in ctx.execution_events
+        ],
+        "execution_nodes": [
+            node.model_dump(mode="json")
+            for node in ctx.execution_nodes
+        ],
+        "state_snapshot": None,
+    }
 
 
 def _now() -> datetime:
@@ -885,6 +1028,25 @@ async def stream_message(
     # 获取所有可用 Skill
     skills = await skill_manager.get_all_skills()
 
+    if _is_simple_greeting(message):
+        yield {"type": "text", "content": _simple_greeting_reply()}
+        yield {
+            "type": "done",
+            "skill_id": None,
+            "skill_name": None,
+            "skill_reason": None,
+            "usage": None,
+            "has_draft": False,
+            "draft_content": None,
+            "writing_state_data": None,
+            "writing_state_update": None,
+            "skill_execution": None,
+            "execution_events": [],
+            "execution_nodes": [],
+            "state_snapshot": None,
+        }
+        return
+
     # 获取或创建 session entry（跨轮复用）
     entry = await get_or_create_session(conversation_id, force_rebuild=force_rebuild)
 
@@ -932,6 +1094,8 @@ async def stream_message(
         streamed_thinking_buffer = ""
         buffered_pre_skill_text = ""
         saw_tool_activity = False
+        thought_tool_call_count = 0
+        hallucinated_text_chunk_count = 0
         prefer_thinking_stream = _looks_like_writing_request(message)
         await emit_execution_event(
             ctx,
@@ -983,6 +1147,18 @@ async def stream_message(
             # --- 工具调用 → status (tool_call) ---
             func_calls = event.get_function_calls()
             if func_calls:
+                if all(fc.name == "thought" for fc in func_calls):
+                    thought_tool_call_count += len(func_calls)
+                else:
+                    thought_tool_call_count = 0
+                if thought_tool_call_count >= THOUGHT_TOOL_LOOP_LIMIT:
+                    async for payload in _yield_loop_guard_completion(
+                        ctx,
+                        reason="检测到本地模型重复调用 thought 兼容工具，已中止本轮避免循环。",
+                        fallback_text="当前本地模型陷入了工具调用循环。请重试，或切换为不启用工具调用的模型配置。",
+                    ):
+                        yield payload
+                    return
                 saw_tool_activity = True
                 if buffered_pre_skill_text.strip():
                     await flush_buffered_thought(
@@ -1074,7 +1250,20 @@ async def stream_message(
             # 否则会把真正的查询结论错误地吞进思考面板。
             if event.partial and event.content:
                 if not ctx.draft_updated:
+                    raw_partial_text = _extract_raw_text_from_content(event.content)
                     partial_text = _extract_text_from_content(event.content)
+                    if _looks_like_hallucinated_tool_payload(raw_partial_text) and not partial_text.strip():
+                        hallucinated_text_chunk_count += 1
+                    elif raw_partial_text.strip():
+                        hallucinated_text_chunk_count = 0
+                    if hallucinated_text_chunk_count >= HALLUCINATED_TEXT_LOOP_LIMIT:
+                        async for payload in _yield_loop_guard_completion(
+                            ctx,
+                            reason="检测到本地模型连续输出伪工具调用文本，已中止本轮避免循环。",
+                            fallback_text="当前本地模型把内部 thought 调用当成了正文输出。请重试，或切换为更稳定的工具调用配置。",
+                        ):
+                            yield payload
+                        return
                     if prefer_thinking_stream and not ctx.selected_skill_id:
                         _delta, buffered_pre_skill_text = _compute_stream_delta(
                             buffered_pre_skill_text,
@@ -1120,7 +1309,16 @@ async def stream_message(
             if event.is_final_response():
                 # 提取最终响应文本（纯对话回复场景，无 Skill 写作）
                 if not ctx.draft_updated and event.content:
+                    raw_final_text = _extract_raw_text_from_content(event.content)
                     final_text = _extract_text_from_content(event.content)
+                    if _looks_like_hallucinated_tool_payload(raw_final_text) and not final_text.strip():
+                        async for payload in _yield_loop_guard_completion(
+                            ctx,
+                            reason="检测到本地模型最终响应仍为伪工具调用文本，已中止本轮。",
+                            fallback_text="当前本地模型没有返回可展示的正式答复，而是输出了内部 thought 调用。请重试，或更换模型配置。",
+                        ):
+                            yield payload
+                        return
                     final_channel = _final_response_channel(
                         draft_updated=ctx.draft_updated,
                         selected_skill_id=ctx.selected_skill_id,

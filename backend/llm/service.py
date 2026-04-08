@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any, AsyncIterator
 from dataclasses import dataclass, asdict, field
 from enum import Enum
-import hashlib
 from urllib.parse import urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
@@ -42,6 +41,7 @@ class LLMConfig:
     temperature: float = 0.7
     max_tokens: int = 4096
     top_p: float = 0.9
+    reasoning_mode: str = "default"
     extra_params: Dict[str, Any] = field(default_factory=dict)
     is_default: bool = False
     is_active: bool = True
@@ -86,6 +86,58 @@ def _normalize_api_base(api_base: str, provider: LLMProvider) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
 
 
+def _normalize_api_key(api_key: Optional[str]) -> str:
+    """Normalize API keys so blank values never produce invalid auth headers."""
+    return str(api_key or "").strip()
+
+
+def _build_json_headers(
+    api_key: Optional[str],
+    extra_headers: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """Build JSON request headers and omit Authorization when the key is blank."""
+    headers = {"Content-Type": "application/json"}
+    normalized_key = _normalize_api_key(api_key)
+    if normalized_key:
+        headers["Authorization"] = f"Bearer {normalized_key}"
+    if extra_headers:
+        headers.update(extra_headers)
+    return headers
+
+
+def normalize_reasoning_mode(reasoning_mode: Optional[str]) -> str:
+    """Normalize persisted reasoning mode values."""
+    normalized = str(reasoning_mode or "default").strip().lower()
+    if normalized in {"default", "thinking", "non-thinking"}:
+        return normalized
+    return "default"
+
+
+def build_reasoning_request_kwargs(
+    provider: LLMProvider,
+    api_base: str,
+    reasoning_mode: Optional[str],
+) -> Dict[str, Any]:
+    """Translate reasoning mode into provider-specific request kwargs."""
+    normalized = normalize_reasoning_mode(reasoning_mode)
+    if normalized != "non-thinking":
+        return {}
+
+    if provider == LLMProvider.QWEN:
+        return {"enable_thinking": False}
+
+    if provider == LLMProvider.OLLAMA:
+        return {
+            "extra_body": {
+                "chat_template_kwargs": {
+                    "enable_thinking": False,
+                }
+            }
+        }
+
+    return {}
+
+
 # =============================================================================
 # Provider Clients
 # =============================================================================
@@ -103,6 +155,7 @@ class DeepSeekClient:
         messages: List[dict],
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        top_p: float = 0.9,
         **kwargs,
     ) -> tuple[str, Optional[dict]]:
         """Send a completion request. Returns (text, usage | None)."""
@@ -113,16 +166,14 @@ class DeepSeekClient:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "top_p": top_p,
             **kwargs,
         }
 
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
                 f"{self.api_base}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
+                headers=_build_json_headers(self.api_key),
                 json=payload,
             )
             resp.raise_for_status()
@@ -141,6 +192,7 @@ class DeepSeekClient:
         messages: List[dict],
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        top_p: float = 0.9,
         **kwargs,
     ) -> AsyncIterator[str | dict]:
         """Stream a completion response. Yields text strings, then final {"usage": ...} dict."""
@@ -151,6 +203,7 @@ class DeepSeekClient:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "top_p": top_p,
             "stream": True,
             "stream_options": {"include_usage": True},
             **kwargs,
@@ -161,10 +214,7 @@ class DeepSeekClient:
             async with client.stream(
                 "POST",
                 f"{self.api_base}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
+                headers=_build_json_headers(self.api_key),
                 json=payload,
             ) as resp:
                 resp.raise_for_status()
@@ -211,6 +261,7 @@ class QWenClient:
         messages: List[dict],
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        top_p: float = 0.9,
         **kwargs,
     ) -> tuple[str, Optional[dict]]:
         """Send a completion request (OpenAI-compatible endpoint). Returns (text, usage | None)."""
@@ -222,6 +273,7 @@ class QWenClient:
             "parameters": {
                 "temperature": temperature,
                 "max_tokens": max_tokens,
+                "top_p": top_p,
                 **kwargs,
             },
         }
@@ -229,10 +281,7 @@ class QWenClient:
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
                 f"{self.api_base}/api/v1/services/aigc/text-generation/generation",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
+                headers=_build_json_headers(self.api_key),
                 json=payload,
             )
             resp.raise_for_status()
@@ -252,6 +301,7 @@ class QWenClient:
         messages: List[dict],
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        top_p: float = 0.9,
         **kwargs,
     ) -> AsyncIterator[str | dict]:
         """Stream via SSE. Yields text strings, then final {"usage": ...} dict."""
@@ -263,6 +313,7 @@ class QWenClient:
             "parameters": {
                 "temperature": temperature,
                 "max_tokens": max_tokens,
+                "top_p": top_p,
                 "incremental_output": True,
                 **kwargs,
             },
@@ -273,11 +324,10 @@ class QWenClient:
             async with client.stream(
                 "POST",
                 f"{self.api_base}/api/v1/services/aigc/text-generation/generation",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                    "X-DashScope-SSE": "enable",
-                },
+                headers=_build_json_headers(
+                    self.api_key,
+                    {"X-DashScope-SSE": "enable"},
+                ),
                 json=payload,
             ) as resp:
                 resp.raise_for_status()
@@ -330,6 +380,9 @@ class LLMConfigManager:
             data = json.loads(self.config_file.read_text())
             for item in data.get("configs", []):
                 item["provider"] = LLMProvider(item["provider"])
+                item["reasoning_mode"] = normalize_reasoning_mode(
+                    item.get("reasoning_mode")
+                )
                 cfg = LLMConfig(**item)
                 self._configs[cfg.id] = cfg
         except Exception as e:
@@ -411,7 +464,9 @@ class LLMService:
             raise ValueError(f"api_base 无效（当前值：'{config.api_base}'）。请在 LLM 配置中填写完整的 URL，例如 https://api.deepseek.com")
         if not config.model_name:
             raise ValueError("model_name 不能为空，请在 LLM 配置中填写模型名称，例如 deepseek-chat")
-        key = _decrypt_key(config.api_key_encrypted)
+        key = _normalize_api_key(_decrypt_key(config.api_key_encrypted))
+        if config.provider != LLMProvider.OLLAMA and not key:
+            raise ValueError("api_key 不能为空。云端模型请填写有效的 API Key；本地 vLLM/Ollama 模型可选择本地模型提供商。")
         if config.provider == LLMProvider.DEEPSEEK:
             return DeepSeekClient(key, api_base, config.model_name)
         elif config.provider == LLMProvider.QWEN:
@@ -457,6 +512,12 @@ class LLMService:
                     msgs,
                     temperature=cfg.temperature,
                     max_tokens=cfg.max_tokens,
+                    top_p=cfg.top_p,
+                    **build_reasoning_request_kwargs(
+                        cfg.provider,
+                        cfg.api_base,
+                        cfg.reasoning_mode,
+                    ),
                 )
             except Exception as e:
                 logger.warning(f"LLM attempt {attempt + 1} failed: {e}")
@@ -493,6 +554,12 @@ class LLMService:
                 msgs,
                 temperature=cfg.temperature,
                 max_tokens=cfg.max_tokens,
+                top_p=cfg.top_p,
+                **build_reasoning_request_kwargs(
+                    cfg.provider,
+                    cfg.api_base,
+                    cfg.reasoning_mode,
+                ),
             ):
                 yield chunk
         except Exception as e:

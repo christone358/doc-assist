@@ -1,6 +1,7 @@
 """
 单元测试 - LLM 配置管理
 """
+import asyncio
 import pytest
 import json
 import uuid
@@ -8,9 +9,16 @@ from pathlib import Path
 from llm.service import (
     LLMConfigManager, LLMConfig, LLMProvider,
     _encrypt_key, _decrypt_key,
-    _normalize_api_base, LLMService,
+    _normalize_api_base, _build_json_headers, LLMService,
+    normalize_reasoning_mode, build_reasoning_request_kwargs,
 )
-from agent.adk.llm_adapter import _normalize_litellm_api_base
+from agent.adk.llm_adapter import (
+    LiteLLMModelConfig,
+    _normalize_litellm_api_base,
+    _resolve_litellm_api_key,
+    build_adk_litellm_model,
+)
+from agent.adk.thought_tool import should_enable_thought_tool
 
 
 @pytest.fixture
@@ -164,15 +172,141 @@ def test_make_client_normalizes_ollama_api_base():
     assert client.model == "qwen2.5-coder:14b-instruct-q5_K_S"
 
 
-def test_normalize_litellm_ollama_api_base_strips_v1():
+def test_build_json_headers_omits_authorization_for_blank_key():
+    assert _build_json_headers("") == {"Content-Type": "application/json"}
+    assert _build_json_headers("  ", {"X-Test": "1"}) == {
+        "Content-Type": "application/json",
+        "X-Test": "1",
+    }
+
+
+def test_normalize_litellm_ollama_api_base_appends_v1():
+    assert (
+        _normalize_litellm_api_base("http://192.168.5.162:11434/", "ollama")
+        == "http://192.168.5.162:11434/v1"
+    )
     assert (
         _normalize_litellm_api_base("http://192.168.5.162:11434/v1/", "ollama")
-        == "http://192.168.5.162:11434"
+        == "http://192.168.5.162:11434/v1"
     )
 
 
-@pytest.mark.asyncio
-async def test_test_connection_handles_complete_tuple(monkeypatch):
+def test_normalize_reasoning_mode_defaults_unknown_values():
+    assert normalize_reasoning_mode(None) == "default"
+    assert normalize_reasoning_mode("NON-THINKING") == "non-thinking"
+    assert normalize_reasoning_mode("weird") == "default"
+
+
+def test_build_reasoning_request_kwargs_for_qwen_non_thinking():
+    assert build_reasoning_request_kwargs(
+        LLMProvider.QWEN,
+        "https://dashscope.aliyuncs.com/api/v1",
+        "non-thinking",
+    ) == {"enable_thinking": False}
+
+
+def test_build_reasoning_request_kwargs_for_ollama_non_thinking():
+    assert build_reasoning_request_kwargs(
+        LLMProvider.OLLAMA,
+        "http://127.0.0.1:11434",
+        "non-thinking",
+    ) == {
+        "extra_body": {
+            "chat_template_kwargs": {
+                "enable_thinking": False,
+            }
+        }
+    }
+
+
+def test_reasoning_mode_persists(config_path):
+    mgr1 = LLMConfigManager(config_file=config_path)
+    cfg = make_config(reasoning_mode="non-thinking")
+    mgr1.add(cfg)
+
+    mgr2 = LLMConfigManager(config_file=config_path)
+    loaded = mgr2.get(cfg.id)
+
+    assert loaded is not None
+    assert loaded.reasoning_mode == "non-thinking"
+
+
+def test_make_client_requires_api_key_for_cloud_models():
+    svc = LLMService()
+    cfg = make_config(api_key_encrypted="")
+
+    with pytest.raises(ValueError, match="api_key 不能为空"):
+        svc._make_client(cfg)
+
+
+def test_make_client_allows_empty_key_for_local_models():
+    svc = LLMService()
+    cfg = make_config(
+        provider=LLMProvider.OLLAMA,
+        api_base="http://192.168.5.162:11434/",
+        api_key_encrypted="",
+    )
+
+    client = svc._make_client(cfg)
+
+    assert client.api_key == ""
+    assert client.api_base == "http://192.168.5.162:11434/v1"
+
+
+def test_resolve_litellm_api_key_uses_placeholder_for_local_openai_compatible():
+    assert _resolve_litellm_api_key("ollama", "") == "local-openai-compatible"
+    assert _resolve_litellm_api_key("deepseek", "") == ""
+
+
+def test_build_adk_litellm_model_passes_placeholder_api_key(monkeypatch):
+    captured = {}
+    pytest.importorskip("google.adk")
+    import google.adk.models.lite_llm as lite_llm_module
+
+    class DummyLiteLlm:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(lite_llm_module, "LiteLlm", DummyLiteLlm)
+
+    build_adk_litellm_model(
+        LiteLLMModelConfig(
+            model="openai/qwen3-32b-fp8",
+            provider="ollama",
+            api_key="local-openai-compatible",
+            api_base="http://192.168.2.66:8010/v1",
+            temperature=0.7,
+            max_tokens=4096,
+            top_p=0.9,
+            request_kwargs={},
+            model_kwargs={},
+        )
+    )
+
+    assert captured["model"] == "openai/qwen3-32b-fp8"
+    assert captured["api_base"] == "http://192.168.2.66:8010/v1"
+    assert captured["api_key"] == "local-openai-compatible"
+
+
+def test_thought_tool_stays_enabled_for_local_openai_compatible_models():
+    cfg = LiteLLMModelConfig(
+        model="openai/qwen3-32b-fp8",
+        provider="ollama",
+        api_key="",
+        api_base="http://192.168.2.66:8010/v1",
+        temperature=0.7,
+        max_tokens=4096,
+        top_p=0.9,
+        request_kwargs={},
+        model_kwargs={},
+    )
+
+    assert should_enable_thought_tool(cfg) is True
+
+
+def test_test_connection_handles_complete_tuple(monkeypatch):
+    pytest.importorskip("fastapi")
+    pytest.importorskip("pydantic")
     from llm import routes
     import llm.service as llm_service
 
@@ -188,7 +322,41 @@ async def test_test_connection_handles_complete_tuple(monkeypatch):
     monkeypatch.setattr(routes, "_manager", DummyManager())
     monkeypatch.setattr(llm_service.LLMService, "complete", fake_complete)
 
-    result = await routes.test_connection(cfg.id)
+    result = asyncio.run(routes.test_connection(cfg.id))
 
     assert result["success"] is True
     assert result["response"] == "OK"
+
+
+def test_update_config_applies_provider_and_default(monkeypatch, config_path):
+    pytest.importorskip("fastapi")
+    pytest.importorskip("pydantic")
+    from llm import routes
+
+    manager = LLMConfigManager(config_file=config_path)
+    cfg1 = make_config(id="cfg-1", name="DeepSeek", is_default=True)
+    cfg2 = make_config(id="cfg-2", name="QWen", is_default=False)
+    manager.add(cfg1)
+    manager.add(cfg2)
+
+    monkeypatch.setattr(routes, "_manager", manager)
+
+    result = asyncio.run(
+        routes.update_config(
+            "cfg-2",
+            routes.LLMConfigUpdate(provider=LLMProvider.OLLAMA, is_default=True),
+        )
+    )
+
+    updated = manager.get("cfg-2")
+    original = manager.get("cfg-1")
+
+    assert updated is not None
+    assert updated.provider == LLMProvider.OLLAMA
+    assert updated.is_default is True
+    assert updated.reasoning_mode == "default"
+    assert original is not None
+    assert original.is_default is False
+    assert result.provider == "ollama"
+    assert result.is_default is True
+    assert result.reasoning_mode == "default"
