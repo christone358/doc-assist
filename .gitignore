@@ -66,3 +66,9 @@ logs/
 backend/llm_configs.json
 backend/backend/llm_configs.json
 backend/docs/conversations/
+
+# Generated document outputs (keep helper script and placeholder only)
+doc_output/**
+!doc_output/
+!doc_output/generate_docx.py
+!doc_output/.placeholder

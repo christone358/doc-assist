@@ -3,6 +3,7 @@
   import { skillList } from '$lib/stores.js';
   import { skills } from '$lib/api.js';
   import { groupSkillResources } from '$lib/skillResources.js';
+  import Icon from '$lib/components/Icon.svelte';
 
   let selected = null;
   let selectedId = null;
@@ -47,7 +48,7 @@
 
   {#if $skillList.length === 0}
     <div class="empty">
-      <span class="material-symbols-outlined" style="font-size:36px;color:var(--dividers);font-variation-settings:'FILL' 0,'wght' 300;">extension_off</span>
+      <Icon name="extension_off" style="font-size:36px;color:var(--dividers);" />
       <p>暂无已加载的 Skill</p>
       <p class="empty-hint">请将 Skill 目录放入 <code>skills/</code> 并重启服务</p>
       <p class="empty-hint">参考 <code>skills/SKILL_DEVELOPMENT_GUIDE.md</code> 开发你自己的 Skill</p>
@@ -57,7 +58,7 @@
       {#each $skillList as skill}
         <button class="skill-card {selectedId === skill.id ? 'active' : ''}" on:click={() => selectSkill(skill)}>
           <div class="skill-icon">
-            <span class="material-symbols-outlined" style="font-size:20px;color:var(--primary);font-variation-settings:'FILL' 1,'wght' 400;">extension</span>
+            <Icon name="extension" style="font-size:20px;color:var(--primary);" />
           </div>
           <div class="skill-name">{skill.name}</div>
           <div class="skill-desc">{skill.description}</div>
@@ -78,28 +79,28 @@
     <div class="detail-header">
       <div class="detail-title-group">
         <div class="detail-icon">
-          <span class="material-symbols-outlined" style="font-size:18px;color:var(--primary);font-variation-settings:'FILL' 1,'wght' 400;">extension</span>
+          <Icon name="extension" style="font-size:18px;color:var(--primary);" />
         </div>
         <h3>{selected?.name || 'Skill 详情'}</h3>
       </div>
       <button class="btn-ghost" on:click={clearSelection}>
-        <span class="material-symbols-outlined" style="font-size:16px;">close</span>
+        <Icon name="close" style="font-size:16px;" />
       </button>
     </div>
     <div class="detail-body">
       {#if detailLoading}
         <div class="detail-empty">
-          <span class="material-symbols-outlined">hourglass_top</span>
+          <Icon name="hourglass_top" spin={true} />
           <p>正在加载技能详情</p>
         </div>
       {:else if detailError}
         <div class="detail-empty">
-          <span class="material-symbols-outlined">error</span>
+          <Icon name="error" />
           <p>{detailError}</p>
         </div>
       {:else if !selected}
         <div class="detail-empty">
-          <span class="material-symbols-outlined">left_click</span>
+          <Icon name="left_click" />
           <p>从左侧选择一个 Skill 查看元信息和内部资源</p>
         </div>
       {:else}
@@ -140,7 +141,7 @@
               {#each resourceGroups as group}
                 <section class="resource-group">
                   <div class="resource-group-header">
-                    <span class="material-symbols-outlined" style="font-size:16px;">{group.icon}</span>
+                    <Icon name={group.icon} style="font-size:16px;" />
                     <span>{group.label}</span>
                   </div>
                   <ul class="resource-list">

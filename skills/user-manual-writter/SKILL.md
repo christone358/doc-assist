@@ -54,13 +54,16 @@ type: user-manual
 1. 接收用户要求写作的目标模块，理解用户的写作要求。
 2. 识别本次意图属于 `create`、`partial-update` 或 `revise-from-base`。
 3. 依据用户的写作意图，按需加载必要的草稿、历史文件版本资料。
-4. 基于用户意图和要求思考，定位到具备影响范围，规划本次的写作方案；
+4. 读取用户使用手册的章节骨架和写作规则。读取 [references/structure/module-manual.md](references/structure/module-manual.md)，明确完整章节的骨架结构。读取 [references/rules/writing-rules.md](references/rules/writing-rules.md)，锁定写作规则、术语规则、缺口处理规则和风险提示规则。
 4. 需要全量输出全部章节内容时，应读取结构参考文件，确定唯一输出骨架。仅修订部分内容时，应聚焦应修改的章节内容，而非骨架。
-5. 读取写作规则参考文件，确定正文写法和缺口处理方式。
-6. 按“规划事实加载”章节中的对应策略加载事实或基线稿。
-7. 执行写作。
-8. 读取质量检查清单，对结构、事实、步骤、术语、输出边界和改动范围做自检。
-9. 仅在正文满足结构和质量要求后结束，若不满足要求，则应该进行一轮修改。修改轮次结束后，若仍不满足要求，则强行结束。
+5. 按“规划事实加载”章节中的对应策略加载事实或基线稿。
+6. 执行写作。
+
+## 正文写作要求
+必须读取以下文件，作为写作章节、写作规则的约束条件：
+
+1. 读取 [references/structure/module-manual.md](references/structure/module-manual.md)，明确完整章节的骨架结构。
+2. 读取 [references/rules/writing-rules.md](references/rules/writing-rules.md)，锁定写作规则、术语规则、缺口处理规则和风险提示规则。
 
 ## 正文输出约束
 
@@ -69,15 +72,11 @@ type: user-manual
 - 不把占位性说明扩写成额外章节。
 - 不因用户未明确要求而增加其他模块、附录、全局概述或部署说明。
 
-## 可使用的参考文件
+## 参考资料
 
-你可以使用以下：参考文件：
+1.  读取[references/checklists/quality-checklist.md](references/checklists/quality-checklist.md)，执行自检。
 
-1. 读取 [references/structure/module-manual.md](references/structure/module-manual.md)，明确完整章节的骨架结构。
-2. 读取 [references/rules/writing-rules.md](references/rules/writing-rules.md)，锁定写作规则、术语规则、缺口处理规则和风险提示规则。
-3. 读取[references/checklists/quality-checklist.md](references/checklists/quality-checklist.md)，执行自检。
 
-不要在未读取结构参考文件时直接开始写作。不要自行发明新的章节树。
 
 ## 规划事实加载
 
@@ -110,16 +109,6 @@ type: user-manual
 - 界面或交互详情读取能力
 - 当前草稿读取能力
 - 历史版本读取能力
-
-若当前执行环境已经通过 MCP 暴露公共工具，优先按以下能力使用：
-
-- `facts.get_module(module_ref)`：加载模块事实主档，作为写作的基础上下文；
-- `prototypes.list_pages(module_ref)`：读取模块已声明页面与匹配状态，确认本轮应查看哪些原型页；
-- `prototypes.get_page(page_ref)`：按页面读取结构化页面事实、页面要素、交互和 `llm_summary`；
-- `get_current_draft()`：读取当前会话草稿；
-- `docs.list_saved(doc_type)` / `docs.load_saved(doc_type, doc_name, version?)`：读取历史正式版本。
-
-若当前环境未暴露上述具体工具，则应寻找与这些能力等价的运行时入口；但在支持 MCP 的环境下，应优先使用 `prototypes.*`，不要直接把原始 HTML 源码当作写作依据。
 
 ### 分意图加载策略
 

@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { factInfo } from '$lib/api.js';
+  import Icon from '$lib/components/Icon.svelte';
 
   let items = [];
   let selected = null;
@@ -139,12 +140,12 @@
 
   <div class="toolbar">
     <div class="search-wrap">
-      <span class="material-symbols-outlined" style="font-size:16px;color:var(--text-muted);">search</span>
+      <Icon name="search" style="font-size:16px;color:var(--text-muted);" />
       <input bind:value={keyword} placeholder="搜索模块、用例、功能点或 API…" on:input={load} />
     </div>
 
     <div class="filter-wrap">
-      <span class="material-symbols-outlined" style="font-size:16px;color:var(--text-muted);">apartment</span>
+      <Icon name="apartment" style="font-size:16px;color:var(--text-muted);" />
       <select bind:value={system} on:change={load}>
         <option value="">全部系统</option>
         {#each systems as systemName}
@@ -156,7 +157,7 @@
 
   {#if items.length === 0}
     <div class="empty">
-      <span class="material-symbols-outlined" style="font-size:36px;color:var(--dividers);font-variation-settings:'FILL' 0,'wght' 300;">auto_stories</span>
+      <Icon name="auto_stories" style="font-size:36px;color:var(--dividers);" />
       <p>暂无模块档案</p>
       <p class="empty-hint">请在 <code>project-facts/modules/</code> 下维护模块档案，或先执行迁移脚本。</p>
     </div>
@@ -187,7 +188,7 @@
                           <div class="item-desc">{item.description}</div>
                         {/if}
                       </div>
-                      <span class="material-symbols-outlined chevron" style="font-size:16px;">chevron_right</span>
+                      <Icon name="chevron_right" className="chevron" style="font-size:16px;" />
                     </button>
                   {/each}
                 </div>
@@ -214,7 +215,7 @@
                             <div class="item-desc">{item.description}</div>
                           {/if}
                         </div>
-                        <span class="material-symbols-outlined chevron" style="font-size:16px;">chevron_right</span>
+                        <Icon name="chevron_right" className="chevron" style="font-size:16px;" />
                       </button>
                     {/each}
                   </div>
@@ -551,7 +552,7 @@ h2 { font-family: var(--font-headline); font-size: 20px; font-weight: 700; color
   color: var(--text);
   line-height: 1.5;
 }
-.chevron { color: var(--text-muted); flex-shrink: 0; }
+:global(.chevron) { color: var(--text-muted); flex-shrink: 0; }
 
 .empty {
   display: flex;

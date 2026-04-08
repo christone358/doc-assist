@@ -138,6 +138,19 @@ def build_reasoning_request_kwargs(
     return {}
 
 
+def _merge_openai_compatible_payload(
+    payload: Dict[str, Any],
+    request_kwargs: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Flatten OpenAI-compatible extra_body fields into the request payload."""
+    merged = dict(payload)
+    extra_body = request_kwargs.pop("extra_body", None)
+    if isinstance(extra_body, dict):
+        merged.update(extra_body)
+    merged.update(request_kwargs)
+    return merged
+
+
 # =============================================================================
 # Provider Clients
 # =============================================================================
@@ -161,14 +174,13 @@ class DeepSeekClient:
         """Send a completion request. Returns (text, usage | None)."""
         import httpx
 
-        payload = {
+        payload = _merge_openai_compatible_payload({
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "top_p": top_p,
-            **kwargs,
-        }
+        }, dict(kwargs))
 
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
@@ -198,7 +210,7 @@ class DeepSeekClient:
         """Stream a completion response. Yields text strings, then final {"usage": ...} dict."""
         import httpx
 
-        payload = {
+        payload = _merge_openai_compatible_payload({
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
@@ -206,8 +218,7 @@ class DeepSeekClient:
             "top_p": top_p,
             "stream": True,
             "stream_options": {"include_usage": True},
-            **kwargs,
-        }
+        }, dict(kwargs))
 
         usage = None
         async with httpx.AsyncClient(timeout=120) as client:

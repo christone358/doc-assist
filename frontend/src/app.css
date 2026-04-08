@@ -50,11 +50,7 @@ html, body {
 a { color: var(--primary); text-decoration: none; }
 a:hover { opacity: 0.8; }
 
-/* Material Symbols baseline */
-.material-symbols-outlined {
-  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-  user-select: none;
-  line-height: 1;
+.codicon {
   vertical-align: middle;
 }
 

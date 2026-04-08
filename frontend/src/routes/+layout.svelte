@@ -8,6 +8,7 @@
   import SkillList from '$lib/components/SkillList.svelte';
   import Documents from '$lib/components/Documents.svelte';
   import FactInfo from '$lib/components/FactInfo.svelte';
+  import Icon from '$lib/components/Icon.svelte';
 
   // Top nav tabs (LLM config moved to bottom)
   const tabs = [
@@ -78,7 +79,7 @@
     <div class="nav-top">
       <div class="logo">
         <div class="logo-icon">
-          <span class="material-symbols-outlined" style="font-size:18px;color:#fff;font-variation-settings:'FILL' 1,'wght' 600;">auto_awesome</span>
+          <Icon name="auto_awesome" style="font-size:18px;color:#fff;" />
         </div>
         <div class="logo-text">
           <span class="logo-name">NextAgent</span>
@@ -95,7 +96,7 @@
             class="nav-btn {isActive ? 'active' : ''}"
             on:click={() => tab.action ? tab.action() : activeTab.set(tab.id)}
           >
-            <span class="material-symbols-outlined nav-icon">{tab.icon}</span>
+            <Icon name={tab.icon} className="nav-icon" />
             <span class="nav-label">{tab.label}</span>
           </button>
         {/each}
@@ -118,7 +119,7 @@
               >
                 <span class="conv-name">{conv.name}</span>
                 <button class="conv-del" on:click={(e) => removeConv(e, conv.id)}>
-                  <span class="material-symbols-outlined" style="font-size:13px;">close</span>
+                  <Icon name="close" style="font-size:13px;" />
                 </button>
               </button>
             {/each}
@@ -135,7 +136,7 @@
               >
                 <span class="conv-name">{conv.name}</span>
                 <button class="conv-del" on:click={(e) => removeConv(e, conv.id)}>
-                  <span class="material-symbols-outlined" style="font-size:13px;">close</span>
+                  <Icon name="close" style="font-size:13px;" />
                 </button>
               </button>
             {/each}
@@ -152,7 +153,7 @@
               >
                 <span class="conv-name">{conv.name}</span>
                 <button class="conv-del" on:click={(e) => removeConv(e, conv.id)}>
-                  <span class="material-symbols-outlined" style="font-size:13px;">close</span>
+                  <Icon name="close" style="font-size:13px;" />
                 </button>
               </button>
             {/each}
@@ -167,7 +168,7 @@
         class="nav-btn {$activeTab === 'llm' ? 'active' : ''}"
         on:click={() => activeTab.set('llm')}
       >
-        <span class="material-symbols-outlined nav-icon">settings</span>
+        <Icon name="settings" className="nav-icon" />
         <span class="nav-label">LLM 配置</span>
       </button>
     </div>
@@ -330,7 +331,6 @@
   color: var(--primary);
   box-shadow: var(--shadow-soft);
 }
-.nav-btn.active .nav-icon { font-variation-settings: 'FILL' 1, 'wght' 500; }
 .nav-icon { font-size: 18px; flex-shrink: 0; }
 .nav-label { flex: 1; }
 

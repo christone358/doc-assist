@@ -9,7 +9,7 @@ from pathlib import Path
 from llm.service import (
     LLMConfigManager, LLMConfig, LLMProvider,
     _encrypt_key, _decrypt_key,
-    _normalize_api_base, _build_json_headers, LLMService,
+    _normalize_api_base, _build_json_headers, _merge_openai_compatible_payload, LLMService,
     normalize_reasoning_mode, build_reasoning_request_kwargs,
 )
 from agent.adk.llm_adapter import (
@@ -177,6 +177,24 @@ def test_build_json_headers_omits_authorization_for_blank_key():
     assert _build_json_headers("  ", {"X-Test": "1"}) == {
         "Content-Type": "application/json",
         "X-Test": "1",
+    }
+
+
+def test_merge_openai_compatible_payload_flattens_extra_body():
+    payload = _merge_openai_compatible_payload(
+        {"model": "qwen3-32b-fp8"},
+        {
+            "extra_body": {
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+            "temperature": 0.2,
+        },
+    )
+
+    assert payload == {
+        "model": "qwen3-32b-fp8",
+        "chat_template_kwargs": {"enable_thinking": False},
+        "temperature": 0.2,
     }
 
 

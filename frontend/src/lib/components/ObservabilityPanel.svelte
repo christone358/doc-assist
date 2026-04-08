@@ -1,5 +1,6 @@
 <script>
   import { obsStore } from '$lib/stores.js';
+  import Icon from '$lib/components/Icon.svelte';
 
   let expanded = {};
 
@@ -135,24 +136,22 @@
   on:click={obsStore.togglePanel}
   title={panelOpen ? '折叠面板' : '展开过程明细'}
 >
-  <span class="material-symbols-outlined" style="font-size:16px;">
-    {panelOpen ? 'chevron_right' : 'chevron_left'}
-  </span>
+  <Icon name={panelOpen ? 'chevron_right' : 'chevron_left'} style="font-size:16px;" />
 </button>
 
 <div class="obs-panel" class:open={panelOpen}>
   <div class="panel-header">
-    <span class="material-symbols-outlined" style="font-size:15px;color:var(--primary);font-variation-settings:'FILL' 1,'wght' 500;">analytics</span>
+    <Icon name="analytics" style="font-size:15px;color:var(--primary);" />
     <span class="panel-title">过程明细</span>
     <button class="close-btn" on:click={obsStore.closePanel} title="关闭">
-      <span class="material-symbols-outlined" style="font-size:16px;">close</span>
+      <Icon name="close" style="font-size:16px;" />
     </button>
   </div>
 
   <div class="panel-content">
     {#if nodeTree.length === 0 && legacyItems.length === 0}
       <div class="empty-hint">
-        <span class="material-symbols-outlined" style="font-size:32px;color:var(--text-muted);opacity:0.4;font-variation-settings:'FILL' 0,'wght' 300;">query_stats</span>
+        <Icon name="query_stats" style="font-size:32px;color:var(--text-muted);opacity:0.4;" />
         <p>等待 Agent 运行…</p>
       </div>
     {:else if nodeTree.length > 0}
@@ -162,7 +161,7 @@
           <div class="node-card" style={`--node-color: ${meta.color};`}>
             <div class="node-head">
               <div class="node-kind" style={`color:${meta.color};`}>
-                <span class="material-symbols-outlined" style="font-size:13px;font-variation-settings:'FILL' 1,'wght' 500;">{meta.icon}</span>
+                <Icon name={meta.icon} style="font-size:13px;" />
                 <span>{meta.label}</span>
               </div>
               {#if actorLabel(node.actor)}
@@ -219,7 +218,7 @@
                     <div class="child-card" style={`--node-color: ${childMeta.color};`}>
                       <div class="node-head">
                         <div class="node-kind" style={`color:${childMeta.color};`}>
-                          <span class="material-symbols-outlined" style="font-size:12px;font-variation-settings:'FILL' 1,'wght' 500;">{childMeta.icon}</span>
+                          <Icon name={childMeta.icon} style="font-size:12px;" />
                           <span>{childMeta.label}</span>
                         </div>
                         {#if statusLabel(child.status)}

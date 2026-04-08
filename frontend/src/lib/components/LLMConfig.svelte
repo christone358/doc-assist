@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { llmConfigList, notify } from '$lib/stores.js';
   import { llmConfigs } from '$lib/api.js';
+  import Icon from '$lib/components/Icon.svelte';
 
   let showForm = false;
   let editingId = null;
@@ -89,19 +90,19 @@
       <p class="page-subtitle">管理 AI 模型连接配置</p>
     </div>
     <button class="btn-primary" on:click={openAdd}>
-      <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">add</span>
+      <Icon name="add" style="font-size:16px;vertical-align:middle;" />
       添加配置
     </button>
   </div>
 
   <div class="hint-bar">
-    <span class="material-symbols-outlined" style="font-size:16px;color:var(--warning);font-variation-settings:'FILL' 1,'wght' 400;">info</span>
+    <Icon name="info" style="font-size:16px;color:var(--warning);" />
     <span>API 令牌仅存储在本地服务器，不会发送至外部服务。请定期更新令牌。</span>
   </div>
 
   {#if $llmConfigList.length === 0}
     <div class="empty">
-      <span class="material-symbols-outlined" style="font-size:36px;color:var(--dividers);font-variation-settings:'FILL' 0,'wght' 300;">settings</span>
+      <Icon name="settings" style="font-size:36px;color:var(--dividers);" />
       <p>暂无配置</p>
       <p class="empty-hint">请添加 DeepSeek、QWen 或 Ollama 模型</p>
     </div>
@@ -112,7 +113,7 @@
           <div class="config-top">
             <div class="config-left">
               <div class="config-icon">
-                <span class="material-symbols-outlined" style="font-size:20px;color:var(--primary);font-variation-settings:'FILL' 1,'wght' 400;">smart_toy</span>
+                <Icon name="smart_toy" style="font-size:20px;color:var(--primary);" />
               </div>
               <div>
                 <div class="config-name-row">
@@ -135,20 +136,20 @@
             </div>
             <div class="config-actions">
               <button class="btn-ghost sm" on:click={() => testConn(cfg.id)} disabled={testing === cfg.id}>
-                <span class="material-symbols-outlined" style="font-size:14px;">{testing === cfg.id ? 'sync' : 'wifi'}</span>
+                <Icon name={testing === cfg.id ? 'sync' : 'wifi'} spin={testing === cfg.id} style="font-size:14px;" />
                 {testing === cfg.id ? '测试中…' : '测试'}
               </button>
               {#if !cfg.is_default}
                 <button class="btn-ghost sm" on:click={() => setDefault(cfg.id)}>
-                  <span class="material-symbols-outlined" style="font-size:14px;">star</span>
+                  <Icon name="star" style="font-size:14px;" />
                   设为默认
                 </button>
               {/if}
               <button class="btn-ghost sm" on:click={() => openEdit(cfg)}>
-                <span class="material-symbols-outlined" style="font-size:14px;">edit</span>
+                <Icon name="edit" style="font-size:14px;" />
               </button>
               <button class="btn-danger sm" on:click={() => remove(cfg.id)}>
-                <span class="material-symbols-outlined" style="font-size:14px;">delete</span>
+                <Icon name="delete" style="font-size:14px;" />
               </button>
             </div>
           </div>
@@ -174,7 +175,7 @@
       <div class="modal-header">
         <h3>{editingId ? '编辑配置' : '添加 LLM 配置'}</h3>
         <button class="btn-ghost" on:click={() => showForm = false}>
-          <span class="material-symbols-outlined" style="font-size:16px;">close</span>
+          <Icon name="close" style="font-size:16px;" />
         </button>
       </div>
       <div class="form-group">

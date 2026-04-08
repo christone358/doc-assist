@@ -4,6 +4,7 @@
   import { activeConvId, messages, streaming, wsConn, notify, triggerConvRefresh, obsStore, updateConversationSummary } from '$lib/stores.js';
   import { conversations, openChatSocket } from '$lib/api.js';
   import ObservabilityPanel from '$lib/components/ObservabilityPanel.svelte';
+  import Icon from '$lib/components/Icon.svelte';
 
   // Configure marked: break on newlines, no pedantic mode
   marked.setOptions({ breaks: true, gfm: true });
@@ -519,7 +520,7 @@
     {#if $messages.length === 0}
       <div class="empty-hint">
         <div class="empty-icon">
-          <span class="material-symbols-outlined" style="font-size:40px;color:var(--primary);font-variation-settings:'FILL' 0,'wght' 300;">auto_awesome</span>
+          <Icon name="auto_awesome" style="font-size:40px;color:var(--primary);" />
         </div>
         <p class="empty-title">你好！我是 NextAgent Doc Assistant</p>
         <p class="empty-subtitle">请描述你需要编写的文档，例如：</p>
@@ -534,14 +535,14 @@
       <div class="msg msg-{msg.role}">
         {#if msg.role === 'assistant'}
           <div class="avatar">
-            <span class="material-symbols-outlined" style="font-size:16px;color:var(--primary);font-variation-settings:'FILL' 1,'wght' 500;">auto_awesome</span>
+            <Icon name="auto_awesome" style="font-size:16px;color:var(--primary);" />
           </div>
         {/if}
         <div class="msg-stack">
           {#if msg.role === 'assistant' && msg.thinking}
             <div class="thought-panel">
               <button class="thought-toggle" on:click={() => toggleMessageSection(msg, 'thinkingOpen')}>
-                <span class="material-symbols-outlined" style="font-size:13px;">{msg.thinkingOpen ? 'expand_less' : 'expand_more'}</span>
+                <Icon name={msg.thinkingOpen ? 'expand_less' : 'expand_more'} style="font-size:13px;" />
                 <span class="thought-title">思考过程</span>
               </button>
               {#if msg.thinkingOpen}
@@ -563,7 +564,7 @@
                 <div class="docs-list">
                   {#each msg.docs as doc}
                     <div class="doc-item">
-                      <span class="material-symbols-outlined" style="font-size:15px;color:var(--primary);font-variation-settings:'FILL' 1,'wght' 400;">description</span>
+                      <Icon name="description" style="font-size:15px;color:var(--primary);" />
                       <span class="doc-path">{doc.file_path}</span>
                       <span class="doc-ver">v{doc.version}</span>
                       <button class="copy-btn" on:click={() => copyPath(doc.file_path)}>复制路径</button>
@@ -576,13 +577,13 @@
                   <div class="meta-tags">
                     {#if msg.metaSkillName}
                       <span class="skill-badge">
-                        <span class="material-symbols-outlined" style="font-size:12px;font-variation-settings:'FILL' 1,'wght' 500;">extension</span>
+                        <Icon name="extension" style="font-size:12px;" />
                         {msg.metaSkillName}
                       </span>
                     {/if}
                     {#if msg.metaUsage}
                       <span class="token-badge">
-                        <span class="material-symbols-outlined" style="font-size:12px;">bar_chart</span>
+                        <Icon name="bar_chart" style="font-size:12px;" />
                         {msg.metaUsage.total_tokens} tokens
                       </span>
                     {/if}
@@ -598,7 +599,7 @@
                 <div class="draft-actions">
                   {#if saveState === 'saved' && saveResult}
                     <span class="draft-saved">
-                      <span class="material-symbols-outlined" style="font-size:14px;font-variation-settings:'FILL' 1,'wght' 500;">check_circle</span>
+                      <Icon name="check_circle" style="font-size:14px;" />
                       已保存 v{saveResult.version}
                     </span>
                     <span class="draft-path">{saveResult.file_path}</span>
@@ -609,7 +610,7 @@
                       disabled={saveState === 'saving' || saveState === 'saved'}
                       on:click={() => saveDraft(msg)}
                     >
-                      <span class="material-symbols-outlined" style="font-size:14px;">save</span>
+                      <Icon name="save" style="font-size:14px;" />
                       {saveState === 'saving' ? '保存中...' : '保存为正式版本'}
                     </button>
                   {/if}
@@ -623,7 +624,7 @@
               {#if msg.summary}
                 <div class="artifact-panel">
                   <button class="artifact-toggle" on:click={() => toggleMessageSection(msg, 'summaryOpen')}>
-                    <span class="material-symbols-outlined" style="font-size:15px;">{msg.summaryOpen ? 'expand_less' : 'expand_more'}</span>
+                    <Icon name={msg.summaryOpen ? 'expand_less' : 'expand_more'} style="font-size:15px;" />
                     <span class="artifact-title">写作摘要</span>
                     <span class="artifact-meta">续写上下文压缩结果</span>
                   </button>
@@ -641,7 +642,7 @@
     {#if $streaming && !$messages.at(-1)?.content}
       <div class="msg msg-assistant">
         <div class="avatar">
-          <span class="material-symbols-outlined" style="font-size:16px;color:var(--primary);font-variation-settings:'FILL' 1,'wght' 500;">auto_awesome</span>
+          <Icon name="auto_awesome" style="font-size:16px;color:var(--primary);" />
         </div>
         <div class="bubble typing">
           <span></span><span></span><span></span>
@@ -662,7 +663,7 @@
       <div class="input-actions">
         {#if $streaming}
           <button class="btn-stop-inline" on:click={stopStreaming} title="停止">
-            <span class="material-symbols-outlined" style="font-size:18px;">stop_circle</span>
+            <Icon name="stop_circle" style="font-size:18px;" />
           </button>
         {/if}
         <button
@@ -671,7 +672,7 @@
           disabled={!inputText.trim()}
           title="发送 (Enter)"
         >
-          <span class="material-symbols-outlined" style="font-size:18px;font-variation-settings:'FILL' 1,'wght' 600;">send</span>
+          <Icon name="send" style="font-size:18px;" />
         </button>
       </div>
     </div>

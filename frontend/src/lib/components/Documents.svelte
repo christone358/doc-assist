@@ -8,6 +8,7 @@
     sortVersionsDesc,
     TYPE_ORDER,
   } from '$lib/documentBrowser.js';
+  import Icon from '$lib/components/Icon.svelte';
 
   let selectedDoc = null;
   let versions = [];
@@ -117,7 +118,7 @@
 
   {#if sections.length === 0}
     <div class="empty">
-      <span class="material-symbols-outlined empty-icon">folder_open</span>
+      <Icon name="folder_open" className="empty-icon" />
       <p>暂无正式输出文档</p>
       <p class="empty-hint">保存为正式版本后，这里会按文档类型自动归类展示。</p>
     </div>
@@ -139,7 +140,7 @@
               {@const tc = getTypeMeta(doc.doc_type, doc.doc_type_label)}
               <div class="doc-row {selectedDoc?.doc_name === doc.doc_name && selectedDoc?.doc_type === doc.doc_type ? 'selected' : ''}">
                 <div class="doc-icon-wrap" style={`background:${tc.bg}`}>
-                  <span class="material-symbols-outlined doc-icon" style={`color:${tc.color}`}>description</span>
+                  <Icon name="description" className="doc-icon" style={`color:${tc.color}`} />
                 </div>
                 <div class="doc-info">
                   <div class="doc-name">{doc.doc_name}</div>
@@ -156,11 +157,11 @@
                 <div class="doc-path-text">{doc.path}</div>
                 <div class="doc-actions">
                   <button class="btn-ghost sm" type="button" on:click={() => selectDoc(doc)}>
-                    <span class="material-symbols-outlined action-icon">history</span>
+                    <Icon name="history" className="action-icon" />
                     版本历史
                   </button>
                   <button class="btn-ghost sm" type="button" on:click={() => copyPath(doc.path)}>
-                    <span class="material-symbols-outlined action-icon">content_copy</span>
+                    <Icon name="content_copy" className="action-icon" />
                     复制路径
                   </button>
                 </div>
@@ -193,7 +194,7 @@
           <span class="modal-subtitle">版本历史</span>
         </div>
         <button class="btn-ghost" type="button" on:click={closeModal}>
-          <span class="material-symbols-outlined action-icon">close</span>
+          <Icon name="close" className="action-icon" />
         </button>
       </div>
 
@@ -209,7 +210,7 @@
                 <span class="ver-path">{version.path}</span>
               </div>
               <button class="btn-ghost sm" type="button" on:click={() => copyPath(version.path)}>
-                <span class="material-symbols-outlined action-icon">content_copy</span>
+                <Icon name="content_copy" className="action-icon" />
               </button>
             </div>
           {/each}
@@ -297,16 +298,15 @@
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chip-color) 16%, transparent);
   }
 
-  .action-icon,
-  .doc-icon,
-  .empty-icon {
+  :global(.action-icon),
+  :global(.doc-icon),
+  :global(.empty-icon) {
     font-size: 16px;
   }
 
-  .empty-icon {
+  :global(.empty-icon) {
     font-size: 36px;
     color: var(--dividers);
-    font-variation-settings: 'FILL' 0, 'wght' 300;
   }
 
   .empty {
@@ -410,9 +410,8 @@
     flex-shrink: 0;
   }
 
-  .doc-icon {
+  :global(.doc-icon) {
     font-size: 18px;
-    font-variation-settings: 'FILL' 1, 'wght' 400;
   }
 
   .doc-info {
