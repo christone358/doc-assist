@@ -214,16 +214,19 @@ GET /api/v1/skills/{skill_id}
 ### 6.1 查询事实信息
 
 ```
-GET /api/v1/fact-info?layer=manifest&category=use_case&keyword=登录
+GET /api/v1/fact-info?keyword=登录&system=业务保障管理系统
 ```
 
 **查询参数**
 
 | 参数 | 说明 |
 |------|------|
-| layer | 层级：manifest / core / design |
-| category | 类别 |
 | keyword | 关键词搜索 |
+| system | 按所属系统过滤 |
+| subsystem | 按所属子系统过滤 |
+| status | 按状态过滤 |
+| layer | 兼容历史 fact 数据的层级过滤，仅 legacy 数据使用 |
+| category | 兼容历史 fact 数据的类别过滤，仅 legacy 数据使用 |
 
 ---
 
@@ -237,10 +240,12 @@ GET /api/v1/fact-info/{fact_id}
 
 ```json
 {
-  "id": "uc-001",
-  "name": "用户登录",
-  "layer": "manifest",
-  "content": "..."
+  "id": "biz-asset-terminal-management",
+  "name": "终端资产管理",
+  "system": "业务保障管理系统",
+  "subsystem": "保障资产管理",
+  "description": "...",
+  "usecases": []
 }
 ```
 

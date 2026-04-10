@@ -10,7 +10,7 @@ project/
 ├── frontend/         # Svelte Web UI 前端
 ├── skills/           # 文档编写 Skill 模块（用户自定义）
 ├── docs/             # 生成的项目文档
-├── project-facts/    # 项目事实信息库（三层结构）
+├── project-facts/    # 项目事实信息库（modules / prototypes / generated）
 └── openspec/         # 规格定义（需求、设计、任务）
 ```
 
@@ -21,7 +21,7 @@ project/
 - **LLM 集成**: 支持 DeepSeek 和 QWen 模型
 - **Web 对话界面**: 基于 open-webui 构建，支持多轮交互
 - **版本管理**: 自动版本控制和文档历史追踪
-- **项目事实信息**: 三层组织的项目知识库，支持智能推荐
+- **项目事实信息**: 基于模块档案聚合的项目知识库，支持智能推荐
 
 ## 快速开始
 

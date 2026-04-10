@@ -699,9 +699,6 @@ async def startup_event():
     agent = AgentCore.get_instance()
     await agent.initialize()
 
-    # Initialize Fact Information Service
-    await get_fact_service()
-
     logger.info("NextAgent Doc Assistant started successfully")
 
 

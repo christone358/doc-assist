@@ -39,19 +39,21 @@ class FactInformationStorage:
             base_path: Base directory for project fact information
         """
         self.base_path = Path(base_path).resolve()
-        self._ensure_directories_exist()
         self._index: Dict[str, FactInformation] = {}
         self._load_index()
 
-    def _ensure_directories_exist(self):
-        """Ensure all necessary directories exist."""
-        for layer in FactLayer:
-            layer_dir = self.base_path / f"{layer.value}"
-            layer_dir.mkdir(parents=True, exist_ok=True)
+    def _get_layer_dir(self, layer: FactLayer) -> Path:
+        """Return the legacy layer directory for a fact layer."""
+        return self.base_path / layer.value
 
-    def _get_file_path(self, layer: FactLayer, category: FactCategory, item_id: str) -> Path:
-        """Get the file path for a fact information item."""
-        layer_dir = self.base_path / layer.value
+    def _get_read_file_path(self, layer: FactLayer, category: FactCategory, item_id: str) -> Path:
+        """Return the expected path for reading a fact item without creating directories."""
+        layer_dir = self._get_layer_dir(layer)
+        return layer_dir / category.value / f"{item_id}.json"
+
+    def _get_write_file_path(self, layer: FactLayer, category: FactCategory, item_id: str) -> Path:
+        """Get the file path for writing a fact information item."""
+        layer_dir = self._get_layer_dir(layer)
         category_dir = layer_dir / category.value
         category_dir.mkdir(parents=True, exist_ok=True)
         return category_dir / f"{item_id}.json"
@@ -66,7 +68,7 @@ class FactInformationStorage:
             True if successful, False otherwise
         """
         try:
-            file_path = self._get_file_path(
+            file_path = self._get_write_file_path(
                 fact_info.metadata.layer,
                 fact_info.metadata.category,
                 fact_info.metadata.id
@@ -110,7 +112,7 @@ class FactInformationStorage:
         # Search for the item
         for layer in FactLayer:
             for category in FactCategory:
-                file_path = self._get_file_path(layer, category, fact_id)
+                file_path = self._get_read_file_path(layer, category, fact_id)
                 if file_path.exists():
                     return self._load_from_file(file_path)
 
@@ -130,7 +132,7 @@ class FactInformationStorage:
                 return False
 
             fact_info = self._index[fact_id]
-            file_path = self._get_file_path(
+            file_path = self._get_read_file_path(
                 fact_info.metadata.layer,
                 fact_info.metadata.category,
                 fact_id
@@ -159,7 +161,7 @@ class FactInformationStorage:
     def _load_index(self):
         """Load all fact information into memory index."""
         for layer in FactLayer:
-            layer_dir = self.base_path / layer.value
+            layer_dir = self._get_layer_dir(layer)
             if layer_dir.exists():
                 for category_dir in layer_dir.iterdir():
                     if category_dir.is_dir():
@@ -339,7 +341,7 @@ _service: Optional[FactInformationService] = None
 
 
 async def get_fact_service() -> FactInformationService:
-    """Get or create the fact information service singleton."""
+    """Get or create the legacy fact information service singleton."""
     global _service, _storage
 
     if _service is None:

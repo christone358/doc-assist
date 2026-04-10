@@ -151,9 +151,9 @@ create_dirs() {
     mkdir -p "$LOGS_DIR" "$PIDS_DIR" \
              "$PROJECT_ROOT/docs" \
              "$PROJECT_ROOT/skills" \
-             "$PROJECT_ROOT/project-facts/layer1-inventory" \
-             "$PROJECT_ROOT/project-facts/layer2-core" \
-             "$PROJECT_ROOT/project-facts/layer3-design"
+             "$PROJECT_ROOT/project-facts/modules" \
+             "$PROJECT_ROOT/project-facts/prototypes" \
+             "$PROJECT_ROOT/project-facts/generated/views"
 }
 
 # ─── 4. 就绪检测 ──────────────────────────────────────────────────────────────

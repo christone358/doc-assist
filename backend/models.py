@@ -1,7 +1,7 @@
 """
 Project Fact Information Data Models
 
-Defines the data structures for the three-layer project fact information system.
+Defines legacy structured fact information models kept for compatibility.
 """
 
 from dataclasses import dataclass, field
@@ -11,7 +11,7 @@ from datetime import datetime
 
 
 class FactLayer(str, Enum):
-    """Enumeration for the three layers of fact information."""
+    """Legacy layer enumeration retained for compatibility with older fact data."""
     MANIFEST = "manifest"          # Layer 1: Inventory/Manifest
     CORE = "core"                  # Layer 2: Core Information
     DESIGN = "design"              # Layer 3: Design & Development
