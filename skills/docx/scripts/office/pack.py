@@ -1,159 +1,123 @@
-"""Pack a directory into a DOCX, PPTX, or XLSX file.
+#!/usr/bin/env python3
+"""Pack an unpacked DOCX directory back into a DOCX file.
 
-Validates with auto-repair, condenses XML formatting, and creates the Office file.
-
-Usage:
-    python pack.py <input_directory> <output_file> [--original <file>] [--validate true|false]
-
-Examples:
-    python pack.py unpacked/ output.docx --original input.docx
-    python pack.py unpacked/ output.pptx --validate false
+- Repairs xml:space for text nodes with edge whitespace.
+- Repairs oversized durableId values.
+- Optionally validates the result.
 """
 
+from __future__ import annotations
+
 import argparse
-import sys
+import random
 import shutil
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
-import defusedxml.minidom
-
-from validators import DOCXSchemaValidator, PPTXSchemaValidator, RedliningValidator
-
-def pack(
-    input_directory: str,
-    output_file: str,
-    original_file: str | None = None,
-    validate: bool = True,
-    infer_author_func=None,
-) -> tuple[None, str]:
-    input_dir = Path(input_directory)
-    output_path = Path(output_file)
-    suffix = output_path.suffix.lower()
-
-    if not input_dir.is_dir():
-        return None, f"Error: {input_dir} is not a directory"
-
-    if suffix not in {".docx", ".pptx", ".xlsx"}:
-        return None, f"Error: {output_file} must be a .docx, .pptx, or .xlsx file"
-
-    if validate and original_file:
-        original_path = Path(original_file)
-        if original_path.exists():
-            success, output = _run_validation(
-                input_dir, original_path, suffix, infer_author_func
-            )
-            if output:
-                print(output)
-            if not success:
-                return None, f"Error: Validation failed for {input_dir}"
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_content_dir = Path(temp_dir) / "content"
-        shutil.copytree(input_dir, temp_content_dir)
-
-        for pattern in ["*.xml", "*.rels"]:
-            for xml_file in temp_content_dir.rglob(pattern):
-                _condense_xml(xml_file)
-
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for f in temp_content_dir.rglob("*"):
-                if f.is_file():
-                    zf.write(f, f.relative_to(temp_content_dir))
-
-    return None, f"Successfully packed {input_dir} to {output_file}"
+W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+XML_NS = "http://www.w3.org/XML/1998/namespace"
+MAX_DURABLE_ID = 0x7FFFFFFE
 
 
-def _run_validation(
-    unpacked_dir: Path,
-    original_file: Path,
-    suffix: str,
-    infer_author_func=None,
-) -> tuple[bool, str | None]:
-    output_lines = []
-    validators = []
-
-    if suffix == ".docx":
-        author = "Claude"
-        if infer_author_func:
-            try:
-                author = infer_author_func(unpacked_dir, original_file)
-            except ValueError as e:
-                print(f"Warning: {e} Using default author 'Claude'.", file=sys.stderr)
-
-        validators = [
-            DOCXSchemaValidator(unpacked_dir, original_file),
-            RedliningValidator(unpacked_dir, original_file, author=author),
-        ]
-    elif suffix == ".pptx":
-        validators = [PPTXSchemaValidator(unpacked_dir, original_file)]
-
-    if not validators:
-        return True, None
-
-    total_repairs = sum(v.repair() for v in validators)
-    if total_repairs:
-        output_lines.append(f"Auto-repaired {total_repairs} issue(s)")
-
-    success = all(v.validate() for v in validators)
-
-    if success:
-        output_lines.append("All validations PASSED!")
-
-    return success, "\n".join(output_lines) if output_lines else None
+def local_name(tag: str) -> str:
+    if "}" in tag:
+        return tag.rsplit("}", 1)[1]
+    return tag
 
 
-def _condense_xml(xml_file: Path) -> None:
-    try:
-        with open(xml_file, encoding="utf-8") as f:
-            dom = defusedxml.minidom.parse(f)
+def repair_xml(path: Path) -> None:
+    root = ET.parse(path).getroot()
+    changed = False
 
-        for element in dom.getElementsByTagName("*"):
-            if element.tagName.endswith(":t"):
+    for el in root.iter():
+        if local_name(el.tag) in {"t", "instrText", "delText", "delInstrText"}:
+            text = el.text or ""
+            if text[:1].isspace() or text[-1:].isspace():
+                if el.get(f"{{{XML_NS}}}space") != "preserve":
+                    el.set(f"{{{XML_NS}}}space", "preserve")
+                    changed = True
+
+        for attr_name, attr_value in list(el.attrib.items()):
+            if local_name(attr_name) != "durableId":
                 continue
+            try:
+                numeric = int(attr_value)
+            except ValueError:
+                numeric = MAX_DURABLE_ID + 1
+            if numeric > MAX_DURABLE_ID:
+                el.set(attr_name, str(random.randint(1, MAX_DURABLE_ID)))
+                changed = True
 
-            for child in list(element.childNodes):
-                if (
-                    child.nodeType == child.TEXT_NODE
-                    and child.nodeValue
-                    and child.nodeValue.strip() == ""
-                ) or child.nodeType == child.COMMENT_NODE:
-                    element.removeChild(child)
+    if changed:
+        path.write_bytes(ET.tostring(root, encoding="utf-8", xml_declaration=True))
 
-        xml_file.write_bytes(dom.toxml(encoding="UTF-8"))
-    except Exception as e:
-        print(f"ERROR: Failed to parse {xml_file.name}: {e}", file=sys.stderr)
-        raise
+
+def validate_unpacked_dir(root_dir: Path) -> list[str]:
+    required = [
+        root_dir / "[Content_Types].xml",
+        root_dir / "_rels" / ".rels",
+        root_dir / "word" / "document.xml",
+    ]
+    issues: list[str] = []
+    for path in required:
+        if not path.exists():
+            issues.append(f"Missing required file: {path}")
+
+    for xml_path in sorted(root_dir.rglob("*.xml")):
+        try:
+            ET.parse(xml_path)
+        except ET.ParseError as exc:
+            issues.append(f"Invalid XML in {xml_path}: {exc}")
+    return issues
+
+
+def zip_dir(root_dir: Path, output_path: Path) -> None:
+    with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(root_dir.rglob("*")):
+            if path.is_dir():
+                continue
+            zf.write(path, path.relative_to(root_dir).as_posix())
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Pack an unpacked DOCX directory.")
+    parser.add_argument("input_dir", type=Path)
+    parser.add_argument("output_docx", type=Path)
+    parser.add_argument("--original", type=Path, default=None)
+    parser.add_argument("--validate", default="true", choices={"true", "false"})
+    args = parser.parse_args()
+
+    input_dir = args.input_dir.expanduser().resolve()
+    output_docx = args.output_docx.expanduser().resolve()
+    do_validate = args.validate.lower() == "true"
+
+    if not input_dir.exists():
+        print(f"Input directory not found: {input_dir}", file=sys.stderr)
+        return 1
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="docx-pack-"))
+    try:
+        working = temp_dir / "package"
+        shutil.copytree(input_dir, working)
+        for xml_path in sorted(working.rglob("*.xml")):
+            repair_xml(xml_path)
+
+        issues = validate_unpacked_dir(working) if do_validate else []
+        if issues:
+            for issue in issues:
+                print(issue, file=sys.stderr)
+            return 1
+
+        output_docx.parent.mkdir(parents=True, exist_ok=True)
+        zip_dir(working, output_docx)
+        print(f"Packed {input_dir} -> {output_docx}")
+        return 0
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Pack a directory into a DOCX, PPTX, or XLSX file"
-    )
-    parser.add_argument("input_directory", help="Unpacked Office document directory")
-    parser.add_argument("output_file", help="Output Office file (.docx/.pptx/.xlsx)")
-    parser.add_argument(
-        "--original",
-        help="Original file for validation comparison",
-    )
-    parser.add_argument(
-        "--validate",
-        type=lambda x: x.lower() == "true",
-        default=True,
-        metavar="true|false",
-        help="Run validation with auto-repair (default: true)",
-    )
-    args = parser.parse_args()
-
-    _, message = pack(
-        args.input_directory,
-        args.output_file,
-        original_file=args.original,
-        validate=args.validate,
-    )
-    print(message)
-
-    if "Error" in message:
-        sys.exit(1)
+    raise SystemExit(main())

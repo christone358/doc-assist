@@ -151,6 +151,43 @@ def _merge_openai_compatible_payload(
     return merged
 
 
+def _extract_text_preview(content: Any) -> str:
+    """Flatten OpenAI-compatible message content into a short plain-text preview."""
+    if isinstance(content, str):
+        return content.strip()
+
+    if isinstance(content, list):
+        parts: List[str] = []
+        for item in content:
+            if isinstance(item, str):
+                text = item.strip()
+                if text:
+                    parts.append(text)
+                continue
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or "").strip()
+            if text:
+                parts.append(text)
+        return "\n".join(parts).strip()
+
+    return str(content or "").strip()
+
+
+def _extract_openai_error_message(data: Any) -> str:
+    """Extract a concise error message from an OpenAI-compatible error payload."""
+    if isinstance(data, dict):
+        error = data.get("error")
+        if isinstance(error, dict):
+            message = str(error.get("message") or "").strip()
+            if message:
+                return message
+        message = str(data.get("message") or "").strip()
+        if message:
+            return message
+    return ""
+
+
 # =============================================================================
 # Provider Clients
 # =============================================================================
@@ -162,6 +199,44 @@ class DeepSeekClient:
         self.api_key = api_key
         self.api_base = api_base.rstrip("/")
         self.model = model
+
+    @staticmethod
+    def _raise_for_status(resp) -> None:
+        import httpx
+
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            message = ""
+            try:
+                message = _extract_openai_error_message(resp.json())
+            except Exception:
+                message = resp.text.strip()
+            raise ValueError(message or str(exc)) from exc
+
+    async def list_models(self) -> List[str]:
+        """List model ids from an OpenAI-compatible /models endpoint."""
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"{self.api_base}/models",
+                headers=_build_json_headers(self.api_key),
+            )
+            self._raise_for_status(resp)
+            data = resp.json()
+
+        items = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            return []
+        models = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            model_id = str(item.get("id") or "").strip()
+            if model_id:
+                models.append(model_id)
+        return models
 
     async def complete(
         self,
@@ -188,7 +263,7 @@ class DeepSeekClient:
                 headers=_build_json_headers(self.api_key),
                 json=payload,
             )
-            resp.raise_for_status()
+            self._raise_for_status(resp)
             data = resp.json()
             text = data["choices"][0]["message"]["content"]
             raw = data.get("usage") or {}
@@ -228,7 +303,7 @@ class DeepSeekClient:
                 headers=_build_json_headers(self.api_key),
                 json=payload,
             ) as resp:
-                resp.raise_for_status()
+                self._raise_for_status(resp)
                 async for line in resp.aiter_lines():
                     if line.startswith("data: "):
                         chunk = line[6:]
@@ -250,6 +325,53 @@ class DeepSeekClient:
                         except json.JSONDecodeError:
                             continue
         yield {"usage": usage}
+
+    async def probe(
+        self,
+        messages: List[dict],
+        temperature: float = 0.0,
+        max_tokens: int = 32,
+        top_p: float = 1.0,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Probe model connectivity without depending on an exact natural-language reply."""
+        import httpx
+
+        payload = _merge_openai_compatible_payload({
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "top_p": top_p,
+        }, dict(kwargs))
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{self.api_base}/chat/completions",
+                headers=_build_json_headers(self.api_key),
+                json=payload,
+            )
+            self._raise_for_status(resp)
+            data = resp.json()
+
+        choices = data.get("choices") or []
+        if not choices:
+            raise ValueError("模型服务已响应，但返回体中缺少 choices 字段。")
+
+        message = choices[0].get("message") or {}
+        preview = _extract_text_preview(message.get("content"))
+        raw_usage = data.get("usage") or {}
+        usage = {
+            "prompt_tokens": raw_usage.get("prompt_tokens", 0),
+            "completion_tokens": raw_usage.get("completion_tokens", 0),
+            "total_tokens": raw_usage.get("total_tokens", 0),
+        } if raw_usage else None
+
+        return {
+            "model": data.get("model") or self.model,
+            "response_preview": preview[:200],
+            "usage": usage,
+        }
 
 
 class OllamaClient(DeepSeekClient):
@@ -537,6 +659,98 @@ class LLMService:
                 else:
                     logger.error(f"All {self._max_retries} attempts failed")
                     return f"⚠️ LLM 调用失败：{str(e)}", None
+
+    async def probe_connection(self, config_id: str) -> Dict[str, Any]:
+        """Probe whether a specific config can serve at least one completion request."""
+        cfg = self.config_manager.get(config_id)
+        if not cfg:
+            return {"success": False, "error": "Config not found"}
+
+        client = self._make_client(cfg)
+        msgs = self._build_messages(
+            "You are a connectivity probe. Keep the answer short.",
+            [],
+            "Reply briefly to confirm the model can generate text.",
+        )
+
+        if cfg.provider == LLMProvider.OLLAMA:
+            available_models = []
+            if hasattr(client, "list_models"):
+                try:
+                    available_models = await client.list_models()
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "provider": cfg.provider.value,
+                        "model": cfg.model_name,
+                        "error": str(e),
+                    }
+
+            if available_models and cfg.model_name not in available_models:
+                return {
+                    "success": False,
+                    "provider": cfg.provider.value,
+                    "model": cfg.model_name,
+                    "error": (
+                        f"模型 '{cfg.model_name}' 不存在。"
+                        f" 当前服务可用模型：{', '.join(available_models)}"
+                    ),
+                }
+
+            try:
+                probe = await client.probe(
+                    msgs,
+                    temperature=0.0,
+                    max_tokens=24,
+                    top_p=1.0,
+                    **build_reasoning_request_kwargs(
+                        cfg.provider,
+                        cfg.api_base,
+                        cfg.reasoning_mode,
+                    ),
+                )
+            except Exception as e:
+                error_message = str(e)
+                if "api key required" in error_message.lower() or "invalid api key" in error_message.lower():
+                    error_message = (
+                        "本地 OpenAI 兼容服务要求有效的 API Key。"
+                        " 请在模型配置中填写服务要求的令牌。"
+                    )
+                return {
+                    "success": False,
+                    "provider": cfg.provider.value,
+                    "model": cfg.model_name,
+                    "error": error_message,
+                }
+
+            result = {
+                "success": True,
+                "provider": cfg.provider.value,
+                "model": probe["model"],
+                "response": probe["response_preview"],
+                "usage": probe["usage"],
+            }
+            if available_models:
+                result["available_models"] = available_models
+            return result
+
+        response, usage = await self.complete(
+            system_prompt="You are a helpful assistant.",
+            messages=[],
+            user_message="Reply with exactly: OK",
+            config_id=config_id,
+        )
+        if response.startswith("⚠️"):
+            return {"success": False, "error": response}
+
+        return {
+            "success": "ok" in response.lower(),
+            "provider": cfg.provider.value,
+            "model": cfg.model_name,
+            "response": response[:200],
+            "usage": usage,
+            "error": None if "ok" in response.lower() else "模型已响应，但测试文本未匹配预期。",
+        }
 
     async def stream_complete(
         self,

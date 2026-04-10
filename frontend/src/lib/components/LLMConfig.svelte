@@ -56,12 +56,17 @@
     testing = id;
     try {
       const res = await llmConfigs.test(id);
-      notify(res.success ? 'success' : 'error', res.success ? '连接成功' : `连接失败：${res.error}`);
+      notify(
+        res.success ? 'success' : 'error',
+        res.success
+          ? `连接成功${res.model ? `：${res.model}` : ''}`
+          : `连接失败：${res.error}`
+      );
     } catch (e) { notify('error', e.message); }
     finally { testing = null; }
   }
 
-  const providerLabels = { deepseek: 'DeepSeek', qwen: 'QWen', ollama: '本地模型（vLLM/Ollama）' };
+  const providerLabels = { deepseek: 'DeepSeek', qwen: 'QWen', ollama: '本地模型（OpenAI 兼容）' };
   const reasoningLabels = {
     default: '默认推理',
     thinking: '思考模式',
@@ -77,8 +82,8 @@
       apiBase: 'https://dashscope.aliyuncs.com'
     },
     ollama: {
-      modelName: 'qwen2.5-coder:14b-instruct-q5_K_S',
-      apiBase: 'http://192.168.5.162:11434'
+      modelName: '例如 qwen3.5:9b / Qwen/Qwen3-8B',
+      apiBase: 'http://127.0.0.1:11434'
     }
   };
 </script>
@@ -104,7 +109,7 @@
     <div class="empty">
       <Icon name="settings" style="font-size:36px;color:var(--dividers);" />
       <p>暂无配置</p>
-      <p class="empty-hint">请添加 DeepSeek、QWen 或 Ollama 模型</p>
+      <p class="empty-hint">请添加 DeepSeek、QWen 或本地 OpenAI 兼容模型</p>
     </div>
   {:else}
     <div class="config-list">
@@ -187,18 +192,21 @@
         <select id="llm-config-provider" bind:value={form.provider}>
           <option value="deepseek">DeepSeek</option>
           <option value="qwen">QWen（通义千问）</option>
-          <option value="ollama">本地模型（vLLM/Ollama）</option>
+          <option value="ollama">本地模型（OpenAI 兼容）</option>
         </select>
       </div>
       <div class="form-group">
         <label for="llm-config-model">模型名称 <span class="required">*</span></label>
         <input id="llm-config-model" bind:value={form.model_name} placeholder={providerPresets[form.provider]?.modelName || ''} />
+        {#if form.provider === 'ollama'}
+          <div class="field-hint">请填写服务实际暴露的模型 id。若服务支持 <code>/v1/models</code>，优先使用返回结果中的精确名称，例如 <code>qwen3.5:9b</code>。</div>
+        {/if}
       </div>
       <div class="form-group">
         <label for="llm-config-api-base">API 地址 <span class="required">*</span></label>
         <input id="llm-config-api-base" bind:value={form.api_base} placeholder={providerPresets[form.provider]?.apiBase || ''} />
         {#if form.provider === 'ollama'}
-          <div class="field-hint">可直接填写服务根地址，系统会自动补全 OpenAI 兼容的 <code>/v1</code> 路径。</div>
+          <div class="field-hint">这里兼容本地 OMLX、Ollama、vLLM 等 OpenAI 兼容服务。可直接填写服务根地址，系统会自动补全 <code>/v1</code>。</div>
         {/if}
       </div>
       <div class="form-group">
@@ -207,9 +215,9 @@
           {#if !editingId && form.provider !== 'ollama'}<span class="required">*</span>{/if}
           {#if editingId}<span class="label-hint">（留空保持不变）</span>{/if}
         </label>
-        <input id="llm-config-api-key" type="password" bind:value={form.api_key} placeholder={form.provider === 'ollama' ? '本地服务通常可留空' : 'sk-...'} />
+        <input id="llm-config-api-key" type="password" bind:value={form.api_key} placeholder={form.provider === 'ollama' ? '按服务要求填写，例如 sk-ollama' : 'sk-...'} />
         {#if form.provider === 'ollama'}
-          <div class="field-hint">使用本地 vLLM 或 Ollama 的 OpenAI 兼容接口时，通常不需要填写 API 令牌。</div>
+          <div class="field-hint">本地 OpenAI 兼容服务不一定允许空令牌。像部分 OMLX/vLLM 服务会校验 Bearer Token，请按服务要求填写，例如 <code>sk-ollama</code>。</div>
         {/if}
       </div>
       <details class="advanced-wrap">

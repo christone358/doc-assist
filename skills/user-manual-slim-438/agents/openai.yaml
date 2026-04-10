@@ -1,0 +1,4 @@
+interface:
+  display_name: "模块用户手册"
+  short_description: "针对单个软件模块生成严肃、严格、专业的用户操作手册"
+  default_prompt: "Use $user-manual-writter to draft a strict module-level software user manual from verified project facts."

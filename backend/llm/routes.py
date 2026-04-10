@@ -217,15 +217,15 @@ async def test_connection(config_id: str):
 
     service = LLMService()
     try:
-        response, _ = await service.complete(
-            system_prompt="You are a helpful assistant.",
-            messages=[],
-            user_message="Reply with exactly: OK",
-            config_id=config_id,
-        )
-        if response.startswith("⚠️"):
-            return {"success": False, "error": response}
-        success = "ok" in response.lower()
-        return {"success": success, "response": response[:200]}
+        result = await service.probe_connection(config_id)
+        if not result.get("success"):
+            return {"success": False, "error": result.get("error", "连接失败")}
+        return {
+            "success": True,
+            "response": result.get("response", ""),
+            "model": result.get("model", config.model_name),
+            "provider": result.get("provider", _provider_value(config.provider)),
+            "usage": result.get("usage"),
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}

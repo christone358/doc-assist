@@ -99,6 +99,16 @@
   let draftSaveResult = {};
   let autoNamingConvId = null;
 
+  function getRoundSummary(round) {
+    const writingState = round?.state_snapshot?.writing_state || null;
+    if (writingState?.has_draft !== true) return '';
+
+    const summary = (round?.skill_execution?.summary || '').trim();
+    if (!summary) return '';
+    if (summary === (round?.agent_response || '').trim()) return '';
+    return round.skill_execution.summary;
+  }
+
   function normalizeAssistantMarkdown(text) {
     if (!text) return '';
 
@@ -168,6 +178,7 @@
           completion_tokens: round.llm_info.completion_tokens,
           total_tokens: round.llm_info.total_tokens,
         } : null,
+        summary: getRoundSummary(round),
         hasDraft: writingState?.has_draft === true,
         skillId: round.skill_execution?.skill_id || round.skill_invoked || null,
       };
@@ -231,6 +242,25 @@
     return currentAssistantMsg;
   }
 
+  function setDeferredPreview(msg, phase) {
+    const nextPhase = phase === 'summary' ? 'summary' : 'writing';
+    msg.deferredPreview = {
+      active: true,
+      phase: nextPhase,
+      title: nextPhase === 'summary' ? '正在整理写作结果' : '正在编写文档',
+      description: nextPhase === 'summary'
+        ? '正文已生成，正在生成写作摘要，完成后将一起展示。'
+        : '已进入写作阶段，完成后将整体渲染 Markdown 预览。',
+    };
+  }
+
+  function clearDeferredPreview(msg) {
+    if (!msg) return;
+    delete msg.deferredPreview;
+    delete msg.pendingSummary;
+    delete msg.deferredDraftBuffer;
+  }
+
   function toggleMessageSection(msg, key) {
     msg[key] = !msg[key];
     messages.update(m => m);
@@ -242,6 +272,7 @@
       msg.docs?.length ||
       msg.metaSkillName ||
       msg.metaUsage ||
+      msg.deferredPreview?.active ||
       msg.hasDraft ||
       msg.isError
     );
@@ -277,6 +308,12 @@
       }
       // 左侧不展示调用链和过程步骤，这些信息仅在右侧过程明细展示
       if (data.sub === 'detail') return;
+      if (data.type === 'status' && data.sub === 'tool_call' && (data.tool === 'write_document' || data.tool === 'write_context_summary')) {
+        const msg = ensureAssistantMessage();
+        setDeferredPreview(msg, data.tool === 'write_context_summary' ? 'summary' : 'writing');
+        messages.update(m => m);
+        scrollToBottom();
+      }
     } else if (data.type === 'subagent_start') {
       obsStore.addEvent({ type: 'subagent_start', content: data.skill_name || data.skill_id, extra: { skill_id: data.skill_id, skill_name: data.skill_name } });
     } else if (data.type === 'execution_event') {
@@ -305,13 +342,17 @@
       scrollToBottom();
     } else if (data.type === 'summary') {
       const msg = ensureAssistantMessage();
-      msg.summary = (msg.summary || '') + data.content;
-      if (msg.summaryOpen === undefined) msg.summaryOpen = false;
+      msg.pendingSummary = (msg.pendingSummary || '') + data.content;
+      setDeferredPreview(msg, 'summary');
       messages.update(m => m);
       scrollToBottom();
     } else if (data.type === 'text') {
       const msg = ensureAssistantMessage();
-      msg.content += data.content;
+      if (msg.deferredPreview?.active) {
+        msg.deferredDraftBuffer = (msg.deferredDraftBuffer || '') + data.content;
+      } else {
+        msg.content += data.content;
+      }
       messages.update(m => m);
       scrollToBottom();
     } else if (data.type === 'document') {
@@ -333,7 +374,11 @@
         });
       }
       if (currentAssistantMsg) {
-        if (!currentAssistantMsg.content && data.skill_execution?.summary) {
+        if (data.has_draft) {
+          currentAssistantMsg.content = data.draft_content || currentAssistantMsg.deferredDraftBuffer || currentAssistantMsg.content || '';
+          currentAssistantMsg.summary = currentAssistantMsg.pendingSummary || data.skill_execution?.summary || currentAssistantMsg.summary || '';
+          if (currentAssistantMsg.summary && currentAssistantMsg.summaryOpen === undefined) currentAssistantMsg.summaryOpen = false;
+        } else if (!currentAssistantMsg.content && data.skill_execution?.summary) {
           currentAssistantMsg.content = data.skill_execution.summary;
         }
         currentAssistantMsg.metaSkillId = data.skill_id || null;
@@ -341,6 +386,7 @@
         currentAssistantMsg.metaSkillReason = data.skill_reason || null;
         currentAssistantMsg.metaUsage = data.usage || null;
         currentAssistantMsg.hasDraft = data.has_draft === true;
+        clearDeferredPreview(currentAssistantMsg);
         messages.update(m => m);
       }
       streaming.set(false);
@@ -361,6 +407,7 @@
       } else {
         currentAssistantMsg.content = data.content || '发生错误';
         currentAssistantMsg.isError = true;
+        clearDeferredPreview(currentAssistantMsg);
         messages.update(m => m);
       }
       streaming.set(false);
@@ -559,6 +606,14 @@
                 {:else}
                   <span class="content">{msg.content}</span>
                 {/if}
+              {:else if msg.deferredPreview?.active}
+                <div class="deferred-preview">
+                  <div class="deferred-title">
+                    <Icon name={msg.deferredPreview.phase === 'summary' ? 'hourglass_top' : 'edit_note'} style="font-size:18px;color:var(--primary);" />
+                    <span>{msg.deferredPreview.title}</span>
+                  </div>
+                  <div class="deferred-desc">{msg.deferredPreview.description}</div>
+                </div>
               {/if}
               {#if msg.docs?.length}
                 <div class="docs-list">
@@ -802,6 +857,27 @@
 .content.markdown :global(th) { background: var(--high); font-weight: 600; }
 .content.markdown :global(strong) { font-weight: 600; }
 .content.markdown :global(em) { font-style: italic; }
+
+.deferred-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 280px;
+  padding: 4px 0;
+}
+.deferred-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+.deferred-desc {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-muted);
+}
 
 /* Typing indicator */
 .typing {

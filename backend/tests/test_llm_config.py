@@ -334,16 +334,139 @@ def test_test_connection_handles_complete_tuple(monkeypatch):
         def get(self, config_id):
             return cfg if config_id == cfg.id else None
 
-    async def fake_complete(self, system_prompt, messages, user_message, config_id=None):
-        return "OK", {"total_tokens": 1}
+    async def fake_probe_connection(self, config_id):
+        assert config_id == cfg.id
+        return {
+            "success": True,
+            "provider": "ollama",
+            "model": cfg.model_name,
+            "response": "模型已就绪",
+            "usage": {"total_tokens": 1},
+        }
 
     monkeypatch.setattr(routes, "_manager", DummyManager())
-    monkeypatch.setattr(llm_service.LLMService, "complete", fake_complete)
+    monkeypatch.setattr(llm_service.LLMService, "probe_connection", fake_probe_connection)
 
     result = asyncio.run(routes.test_connection(cfg.id))
 
     assert result["success"] is True
-    assert result["response"] == "OK"
+    assert result["response"] == "模型已就绪"
+    assert result["provider"] == "ollama"
+
+
+def test_probe_connection_for_local_model_uses_probe(monkeypatch):
+    svc = LLMService()
+    cfg = make_config(
+        id="local-probe",
+        provider=LLMProvider.OLLAMA,
+        model_name="qwen3:8b",
+        api_base="http://127.0.0.1:11434",
+    )
+    svc.config_manager.get = lambda config_id: cfg if config_id == cfg.id else None
+
+    class DummyClient:
+        async def list_models(self):
+            return ["qwen3:8b"]
+
+        async def probe(self, messages, temperature=0.0, max_tokens=32, top_p=1.0, **kwargs):
+            assert messages[-1]["role"] == "user"
+            assert kwargs == {}
+            return {
+                "model": "qwen3:8b",
+                "response_preview": "好的，模型可用。",
+                "usage": {"total_tokens": 3},
+            }
+
+    monkeypatch.setattr(svc, "_make_client", lambda config: DummyClient())
+
+    result = asyncio.run(svc.probe_connection(cfg.id))
+
+    assert result == {
+        "success": True,
+        "provider": "ollama",
+        "model": "qwen3:8b",
+        "response": "好的，模型可用。",
+        "usage": {"total_tokens": 3},
+        "available_models": ["qwen3:8b"],
+    }
+
+
+def test_probe_connection_for_local_model_reports_available_models_on_mismatch(monkeypatch):
+    svc = LLMService()
+    cfg = make_config(
+        id="local-mismatch",
+        provider=LLMProvider.OLLAMA,
+        model_name="qwen3:9b",
+        api_base="http://192.168.5.208:8000",
+    )
+    svc.config_manager.get = lambda config_id: cfg if config_id == cfg.id else None
+
+    class DummyClient:
+        async def list_models(self):
+            return ["qwen3.5:9b"]
+
+    monkeypatch.setattr(svc, "_make_client", lambda config: DummyClient())
+
+    result = asyncio.run(svc.probe_connection(cfg.id))
+
+    assert result == {
+        "success": False,
+        "provider": "ollama",
+        "model": "qwen3:9b",
+        "error": "模型 'qwen3:9b' 不存在。 当前服务可用模型：qwen3.5:9b",
+    }
+
+
+def test_probe_connection_for_local_model_surfaces_auth_hint(monkeypatch):
+    svc = LLMService()
+    cfg = make_config(
+        id="local-auth",
+        provider=LLMProvider.OLLAMA,
+        model_name="qwen3.5:9b",
+        api_base="http://192.168.5.208:8000",
+    )
+    svc.config_manager.get = lambda config_id: cfg if config_id == cfg.id else None
+
+    class DummyClient:
+        async def list_models(self):
+            return ["qwen3.5:9b"]
+
+        async def probe(self, *args, **kwargs):
+            raise ValueError("API key required")
+
+    monkeypatch.setattr(svc, "_make_client", lambda config: DummyClient())
+
+    result = asyncio.run(svc.probe_connection(cfg.id))
+
+    assert result == {
+        "success": False,
+        "provider": "ollama",
+        "model": "qwen3.5:9b",
+        "error": "本地 OpenAI 兼容服务要求有效的 API Key。 请在模型配置中填写服务要求的令牌。",
+    }
+
+
+def test_probe_connection_for_cloud_model_keeps_complete_path(monkeypatch):
+    svc = LLMService()
+    cfg = make_config(id="cloud-probe", provider=LLMProvider.DEEPSEEK)
+    svc.config_manager.get = lambda config_id: cfg if config_id == cfg.id else None
+
+    async def fake_complete(system_prompt, messages, user_message, config_id=None):
+        assert config_id == cfg.id
+        return "OK", {"total_tokens": 2}
+
+    monkeypatch.setattr(svc, "complete", fake_complete)
+
+    result = asyncio.run(svc.probe_connection(cfg.id))
+
+    assert result == {
+        "success": True,
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "response": "OK",
+        "usage": {"total_tokens": 2},
+        "error": None,
+    }
 
 
 def test_update_config_applies_provider_and_default(monkeypatch, config_path):
