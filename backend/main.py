@@ -68,6 +68,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Third-party SDKs can emit very noisy DEBUG logs for local OpenAI-compatible
+# models (for example LiteLLM cost estimation on unknown model ids). Keep our
+# backend logs verbose, but quiet these libraries unless they log warnings.
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("litellm").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.INFO)
+logging.getLogger("httpx").setLevel(logging.INFO)
+
 # Create FastAPI app
 app = FastAPI(
     title="NextAgent Doc Assistant API",

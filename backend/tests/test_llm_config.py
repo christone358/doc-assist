@@ -368,7 +368,7 @@ def test_probe_connection_for_local_model_uses_probe(monkeypatch):
         async def list_models(self):
             return ["qwen3:8b"]
 
-        async def probe(self, messages, temperature=0.0, max_tokens=32, top_p=1.0, **kwargs):
+        async def probe_stream_start(self, messages, temperature=0.0, max_tokens=32, top_p=1.0, **kwargs):
             assert messages[-1]["role"] == "user"
             assert kwargs == {}
             return {
@@ -387,6 +387,41 @@ def test_probe_connection_for_local_model_uses_probe(monkeypatch):
         "model": "qwen3:8b",
         "response": "好的，模型可用。",
         "usage": {"total_tokens": 3},
+        "available_models": ["qwen3:8b"],
+    }
+
+
+def test_probe_connection_for_local_model_falls_back_to_probe(monkeypatch):
+    svc = LLMService()
+    cfg = make_config(
+        id="local-probe-fallback",
+        provider=LLMProvider.OLLAMA,
+        model_name="qwen3:8b",
+        api_base="http://127.0.0.1:11434",
+    )
+    svc.config_manager.get = lambda config_id: cfg if config_id == cfg.id else None
+
+    class DummyClient:
+        async def list_models(self):
+            return ["qwen3:8b"]
+
+        async def probe(self, messages, temperature=0.0, max_tokens=32, top_p=1.0, **kwargs):
+            return {
+                "model": "qwen3:8b",
+                "response_preview": "fallback ok",
+                "usage": {"total_tokens": 2},
+            }
+
+    monkeypatch.setattr(svc, "_make_client", lambda config: DummyClient())
+
+    result = asyncio.run(svc.probe_connection(cfg.id))
+
+    assert result == {
+        "success": True,
+        "provider": "ollama",
+        "model": "qwen3:8b",
+        "response": "fallback ok",
+        "usage": {"total_tokens": 2},
         "available_models": ["qwen3:8b"],
     }
 
@@ -443,6 +478,37 @@ def test_probe_connection_for_local_model_surfaces_auth_hint(monkeypatch):
         "provider": "ollama",
         "model": "qwen3.5:9b",
         "error": "本地 OpenAI 兼容服务要求有效的 API Key。 请在模型配置中填写服务要求的令牌。",
+    }
+
+
+def test_probe_connection_for_local_model_surfaces_timeout_hint(monkeypatch):
+    import httpx
+
+    svc = LLMService()
+    cfg = make_config(
+        id="local-timeout",
+        provider=LLMProvider.OLLAMA,
+        model_name="qwen3.5:9b",
+        api_base="http://127.0.0.1:8080",
+    )
+    svc.config_manager.get = lambda config_id: cfg if config_id == cfg.id else None
+
+    class DummyClient:
+        async def list_models(self):
+            return ["qwen3.5:9b"]
+
+        async def probe_stream_start(self, *args, **kwargs):
+            raise httpx.ReadTimeout("timed out")
+
+    monkeypatch.setattr(svc, "_make_client", lambda config: DummyClient())
+
+    result = asyncio.run(svc.probe_connection(cfg.id))
+
+    assert result == {
+        "success": False,
+        "provider": "ollama",
+        "model": "qwen3.5:9b",
+        "error": "模型服务已连接，但在等待响应时超时。模型可能仍在冷启动或首轮推理较慢，请稍后重试。",
     }
 
 

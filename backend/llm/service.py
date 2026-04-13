@@ -188,6 +188,23 @@ def _extract_openai_error_message(data: Any) -> str:
     return ""
 
 
+def _describe_probe_exception(exc: Exception) -> str:
+    """Translate probe exceptions into clearer user-facing messages."""
+    import httpx
+
+    if isinstance(exc, httpx.ConnectTimeout):
+        return "连接模型服务超时。请检查服务地址、端口，以及本地模型服务是否已启动。"
+    if isinstance(exc, httpx.ReadTimeout):
+        return "模型服务已连接，但在等待响应时超时。模型可能仍在冷启动或首轮推理较慢，请稍后重试。"
+    if isinstance(exc, httpx.ConnectError):
+        return "无法连接到模型服务。请确认本地服务正在监听对应地址和端口。"
+
+    message = str(exc).strip()
+    if message:
+        return message
+    return "模型服务请求失败，但没有返回明确错误。请检查服务日志。"
+
+
 # =============================================================================
 # Provider Clients
 # =============================================================================
@@ -218,7 +235,7 @@ class DeepSeekClient:
         """List model ids from an OpenAI-compatible /models endpoint."""
         import httpx
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
             resp = await client.get(
                 f"{self.api_base}/models",
                 headers=_build_json_headers(self.api_key),
@@ -257,7 +274,7 @@ class DeepSeekClient:
             "top_p": top_p,
         }, dict(kwargs))
 
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
             resp = await client.post(
                 f"{self.api_base}/chat/completions",
                 headers=_build_json_headers(self.api_key),
@@ -296,7 +313,7 @@ class DeepSeekClient:
         }, dict(kwargs))
 
         usage = None
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
             async with client.stream(
                 "POST",
                 f"{self.api_base}/chat/completions",
@@ -345,7 +362,7 @@ class DeepSeekClient:
             "top_p": top_p,
         }, dict(kwargs))
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
             resp = await client.post(
                 f"{self.api_base}/chat/completions",
                 headers=_build_json_headers(self.api_key),
@@ -372,6 +389,67 @@ class DeepSeekClient:
             "response_preview": preview[:200],
             "usage": usage,
         }
+
+    async def probe_stream_start(
+        self,
+        messages: List[dict],
+        temperature: float = 0.0,
+        max_tokens: int = 32,
+        top_p: float = 1.0,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Probe stream startup for services that respond more reliably in streaming mode."""
+        import httpx
+
+        payload = _merge_openai_compatible_payload({
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "top_p": top_p,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }, dict(kwargs))
+
+        async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
+            async with client.stream(
+                "POST",
+                f"{self.api_base}/chat/completions",
+                headers=_build_json_headers(self.api_key),
+                json=payload,
+            ) as resp:
+                self._raise_for_status(resp)
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    chunk = line[6:].strip()
+                    if not chunk:
+                        continue
+                    if chunk == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(chunk)
+                    except json.JSONDecodeError:
+                        continue
+
+                    choices = data.get("choices") or []
+                    if choices:
+                        delta = choices[0].get("delta") or {}
+                        preview = _extract_text_preview(delta.get("content"))
+                        return {
+                            "model": data.get("model") or self.model,
+                            "response_preview": preview[:200],
+                            "usage": data.get("usage"),
+                        }
+
+                    if data.get("usage"):
+                        return {
+                            "model": data.get("model") or self.model,
+                            "response_preview": "",
+                            "usage": data.get("usage"),
+                        }
+
+        raise ValueError("模型服务未返回可识别的流式数据。")
 
 
 class OllamaClient(DeepSeekClient):
@@ -411,7 +489,7 @@ class QWenClient:
             },
         }
 
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
             resp = await client.post(
                 f"{self.api_base}/api/v1/services/aigc/text-generation/generation",
                 headers=_build_json_headers(self.api_key),
@@ -453,7 +531,7 @@ class QWenClient:
         }
 
         usage = None
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
             async with client.stream(
                 "POST",
                 f"{self.api_base}/api/v1/services/aigc/text-generation/generation",
@@ -683,7 +761,7 @@ class LLMService:
                         "success": False,
                         "provider": cfg.provider.value,
                         "model": cfg.model_name,
-                        "error": str(e),
+                        "error": _describe_probe_exception(e),
                     }
 
             if available_models and cfg.model_name not in available_models:
@@ -698,7 +776,8 @@ class LLMService:
                 }
 
             try:
-                probe = await client.probe(
+                probe_method = getattr(client, "probe_stream_start", None) or getattr(client, "probe")
+                probe = await probe_method(
                     msgs,
                     temperature=0.0,
                     max_tokens=24,
@@ -710,7 +789,7 @@ class LLMService:
                     ),
                 )
             except Exception as e:
-                error_message = str(e)
+                error_message = _describe_probe_exception(e)
                 if "api key required" in error_message.lower() or "invalid api key" in error_message.lower():
                     error_message = (
                         "本地 OpenAI 兼容服务要求有效的 API Key。"
